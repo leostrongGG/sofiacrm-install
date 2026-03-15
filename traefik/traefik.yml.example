@@ -1,0 +1,33 @@
+api:
+  dashboard: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entrypoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  letsencryptresolver:
+    acme:
+      httpChallenge:
+        entryPoint: web
+      # Substitua pelo seu e-mail (usado pelo Let's Encrypt para notificações)
+      email: seuemail@dominio.com
+      storage: /acme/acme.json
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+log:
+  level: INFO
+
+accessLog: {}

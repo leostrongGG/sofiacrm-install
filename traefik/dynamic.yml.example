@@ -1,0 +1,39 @@
+http:
+  routers:
+    crm_api:
+      rule: "Host(`crm.seudominio.com`)"
+      entryPoints:
+        - websecure
+      service: crm_api
+      tls:
+        certResolver: letsencryptresolver
+      priority: 1
+
+    meta_webhook:
+      rule: "Host(`crm.seudominio.com`) && PathPrefix(`/api/webhooks/meta/whatsapp`)"
+      entryPoints:
+        - websecure
+      service: meta_cloud
+      tls:
+        certResolver: letsencryptresolver
+      priority: 20
+
+    meta_cloud_api:
+      rule: "Host(`crm.seudominio.com`) && PathPrefix(`/api/meta-cloud`)"
+      entryPoints:
+        - websecure
+      service: meta_cloud
+      tls:
+        certResolver: letsencryptresolver
+      priority: 20
+
+  services:
+    crm_api:
+      loadBalancer:
+        servers:
+          - url: "http://crm_api:3000"
+
+    meta_cloud:
+      loadBalancer:
+        servers:
+          - url: "http://crm_meta_cloud:8090"

@@ -1,0 +1,173 @@
+services:
+
+  # ── Traefik — proxy reverso + SSL Let's Encrypt ──────────────────────────────
+  traefik:
+    image: traefik:v3.3
+    container_name: traefik
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./traefik/acme.json:/acme/acme.json
+    networks:
+      - sofiacrm_net
+
+  # ── PostgreSQL 18 + pgvector ──────────────────────────────────────────────────
+  pgvector:
+    image: pgvector/pgvector:pg18
+    container_name: sofiacrm-pgvector
+    restart: always
+    command:
+      [
+        "postgres",
+        "-c", "max_connections=300",
+        "-c", "shared_buffers=1GB",
+        "-c", "work_mem=32MB",
+        "-c", "maintenance_work_mem=512MB",
+        "-c", "effective_cache_size=3GB",
+        "-c", "wal_buffers=16MB",
+        "-c", "checkpoint_completion_target=0.9",
+        "-c", "wal_level=replica",
+        "-c", "port=5432",
+        "-c", "timezone=UTC",
+        "-c", "log_min_duration_statement=500",
+        "-c", "log_error_verbosity=default",
+        "-c", "default_statistics_target=100",
+        "-c", "shared_preload_libraries=pg_stat_statements",
+        "-c", "pg_stat_statements.max=5000",
+        "-c", "pg_stat_statements.track=all"
+      ]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: crm
+    volumes:
+      - postgres18_data:/var/lib/postgresql
+    networks:
+      - sofiacrm_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d crm -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:latest
+    container_name: sofiacrm-redis
+    restart: always
+    command:
+      [
+        "redis-server",
+        "--appendonly", "yes",
+        "--port", "6379",
+        "--requirepass", "${REDIS_PASSWORD}",
+        "--maxmemory-policy", "noeviction"
+      ]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - sofiacrm_net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── CRM API ───────────────────────────────────────────────────────────────────
+  crm_api:
+    image: inovanode/sofiacrm-community:latest
+    container_name: crm_api
+    restart: always
+    depends_on:
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgvector:5432/crm
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NODE_ENV: production
+      PORT: 3000
+      MEDIA_DIR: /app/media
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
+      AWS_S3_ENDPOINT: ${AWS_S3_ENDPOINT:-}
+      AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-false}
+      JWT_SECRET: ${JWT_SECRET}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_TOKEN}
+      CONTACTS_UPDATE_INTERVAL_HOURS: 1
+      CONTACTS_UPDATE_BATCH_SIZE: 100
+      LOG_LEVEL: INFO
+      DISABLE_TRIAL_REGISTRATION: 1
+      APP_LOCALE: pt-BR
+      API_TOKEN_RATE_LIMIT_MAX: 100
+      META_CLOUD_SERVICE_URL: http://meta-cloud-service:8090
+      META_CLOUD_SERVICE_TOKEN: ${META_CLOUD_SERVICE_TOKEN}
+      PUBLIC_BASE_URL: https://${CRM_DOMAIN}
+    volumes:
+      - media_data:/app/media
+    networks:
+      - sofiacrm_net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    ports:
+      - "3000:3000"
+
+  # ── WhatsApp Service ──────────────────────────────────────────────────────────
+  whats-service:
+    image: inovanode/sofiacrm-whats-service-pro:latest
+    container_name: crm_whatsmeow
+    restart: always
+    depends_on:
+      crm_api:
+        condition: service_healthy
+    environment:
+      CRM_API_URL: http://crm_api:3000
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_TOKEN}
+      STORE_PATH: /app/data
+      WHATSAPP_DEVICE_NAME: whatsapp
+    volumes:
+      - whatsmeow_data:/app/data
+    networks:
+      - sofiacrm_net
+
+  # ── Meta Cloud Service ────────────────────────────────────────────────────────
+  meta-cloud-service:
+    image: inovanode/sofia-meta-cloud-service-pro:latest
+    container_name: crm_meta_cloud
+    restart: always
+    depends_on:
+      crm_api:
+        condition: service_healthy
+    environment:
+      CRM_API_URL: http://crm_api:3000
+      META_CLOUD_SERVICE_TOKEN: ${META_CLOUD_SERVICE_TOKEN}
+      PORT: 8090
+    networks:
+      - sofiacrm_net
+
+volumes:
+  postgres18_data:
+  redis_data:
+  whatsmeow_data:
+  media_data:
+
+networks:
+  sofiacrm_net:
+    driver: bridge
+    name: sofiacrm_net

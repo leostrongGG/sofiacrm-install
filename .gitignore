@@ -1,0 +1,9 @@
+# Variáveis de ambiente com segredos — NUNCA commitar
+.env
+
+# Arquivos Traefik gerados pelo script (contêm domínio e e-mail reais)
+traefik/traefik.yml
+traefik/dynamic.yml
+
+# Certificados Let's Encrypt gerados automaticamente
+traefik/acme.json

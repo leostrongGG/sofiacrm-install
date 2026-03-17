@@ -5,6 +5,10 @@ Guia testado em **Ubuntu 24.04 LTS AMD64** com **Docker 29+** e **Docker Compose
 > **Recomendado:** Use o script `sofia_install.sh` para instalar automaticamente.  
 > Este documento descreve a instalação manual passo a passo.
 
+> **Edições disponíveis:**  
+> **Free** — instalação base, opção 1 do script.  
+> **PRO** — upgrade sobre o Free, opção 2 do script. Requer `LICENSE_TOKEN` (fornecido na compra).
+
 ---
 
 ## ⚠️ Pré-requisitos obrigatórios
@@ -274,15 +278,18 @@ docker logs crm_api --tail 10
 
 ```
 /root/SofiaCRM/
-├── sofia_install.sh            ← script de instalação automática
-├── .env                        ← criado por você (NUNCA commitar!)
-├── .env.example                ← modelo de variáveis
+├── sofia_install.sh                    ← script de instalação automática (v1.2)
+├── .env                                ← criado por você (NUNCA commitar!)
+├── .env.example                        ← modelo de variáveis
 ├── .gitignore
-├── docker-compose.yml          ← todos os 6 serviços em um arquivo
+├── docker-compose.yml                  ← 6 serviços base (edição Free)
+├── docker-compose.override.yml         ← criado automaticamente no upgrade PRO
+├── docker-compose.override.yml.example ← template PRO (editavel, origem do override)
+├── docker-compose-n8n.yml              ← compose separado para o n8n (opcional)
 └── traefik/
     ├── traefik.yml             ← criado por você (contém seu e-mail)
     ├── traefik.yml.example     ← modelo com placeholders
-    ├── dynamic.yml             ← criado por você (contém seu domínio)
+    ├── dynamic.yml             ← criado por você (contém seu domínio e rotas)
     ├── dynamic.yml.example     ← modelo com placeholders
     └── acme.json               ← gerado automaticamente pelo Traefik
 ```
@@ -299,3 +306,177 @@ docker logs crm_api --tail 10
 | `client version 1.24 is too old` no Traefik | Provider Docker incompatível com Docker 29+ | Use o provider `file` conforme este guia |
 | `Eviction policy` warning no Redis | `allkeys-lru` configurado | Troque para `noeviction` |
 | `crm_api` em restart loop | PostgreSQL ou Redis ainda não healthy | Aguarde os healthchecks — `depends_on` garante a ordem |
+
+---
+
+## Upgrade Free → PRO (manual)
+
+> O script `sofia_install.sh` executa este processo automaticamente via **opção 2**.  
+> Siga as etapas abaixo apenas se quiser fazer o upgrade manualmente.
+
+### O que o upgrade faz
+
+- Troca a imagem `sofiacrm-community:latest` → `sofiacrm-pro:latest`
+- Adiciona o serviço `wa-call-gateway` (chamadas de voz via WhatsApp)
+- **Mantém** todos os dados: banco PostgreSQL, volumes Redis, mídia, sessões WhatsApp
+- **Mantém** todas as senhas e tokens existentes (não precisa regenerar)
+
+### Pré-requisitos PRO
+
+- Instalação Free funcionando
+- `LICENSE_TOKEN` — fornecido por e-mail na compra da licença PRO
+- IP público da VPS — usado pelo `wa-call-gateway` para roteamento de chamadas
+- Portas UDP/TCP **30000-30100** abertas no firewall da VPS
+
+### Passo 1 — Adicionar variáveis PRO ao `.env`
+
+```env
+# Adicione ao final do .env existente
+CRM_EDITION=pro
+LICENSE_TOKEN=seu_token_de_licenca
+VPS_PUBLIC_IP=203.0.113.10
+```
+
+### Passo 2 — Criar `docker-compose.override.yml`
+
+Crie o arquivo `/root/SofiaCRM/docker-compose.override.yml`:
+
+```yaml
+services:
+  crm_api:
+    image: inovanode/sofiacrm-pro:latest
+    environment:
+      LICENSE_TOKEN: ${LICENSE_TOKEN}
+
+  wa-call-gateway:
+    image: inovanode/sofiacrm-gateway:latest
+    container_name: crm_wa_gateway
+    restart: always
+    depends_on:
+      crm_api:
+        condition: service_healthy
+    environment:
+      PORT: 8091
+      GATEWAY_UDP_MIN: 30000
+      GATEWAY_UDP_MAX: 30100
+      GATEWAY_PUBLIC_IP: ${VPS_PUBLIC_IP}
+      CRM_API_URL: http://crm_api:3000
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_TOKEN}
+    ports:
+      - "30000-30100:30000-30100/udp"
+      - "30000-30100:30000-30100/tcp"
+    networks:
+      - sofiacrm_net
+```
+
+> O Docker Compose lê `docker-compose.yml` + `docker-compose.override.yml` automaticamente,
+> sem nenhuma flag adicional.
+
+### Passo 3 — Aplicar o upgrade
+
+```sh
+cd /root/SofiaCRM
+docker compose pull          # baixa imagens PRO
+docker compose down          # para os containers
+docker compose up -d         # sobe com override aplicado
+```
+
+### Verificação
+
+```sh
+docker ps --format '{{.Names}}: {{.Status}}'
+```
+
+Saída esperada após upgrade (adicionado `crm_wa_gateway`):
+```
+traefik:            Up X minutes
+sofiacrm-pgvector:  Up X minutes (healthy)
+sofiacrm-redis:     Up X minutes (healthy)
+crm_api:            Up X minutes (healthy)
+crm_whatsmeow:      Up X minutes
+crm_meta_cloud:     Up X minutes
+crm_wa_gateway:     Up X minutes
+```
+
+### Erros comuns no upgrade
+
+| Erro | Causa | Solução |
+|---|---|---|
+| `crm_api` não inicia após upgrade | `LICENSE_TOKEN` inválido ou ausente | Confira o token no `.env` e no override |
+| `crm_wa_gateway` não conecta | IP da VPS incorreto | Confira `VPS_PUBLIC_IP` no `.env` |
+| Portas 30000-30100 recusadas | Firewall bloqueando | Abra UDP/TCP 30000-30100 no firewall da VPS |
+
+---
+
+## Instalar n8n (opcional)
+
+> O script `sofia_install.sh` executa este processo automaticamente via **opção 5**.  
+> Siga as etapas abaixo apenas se quiser instalar o n8n manualmente.
+
+### Pré-requisitos n8n
+
+- SofiaCRM (Free ou PRO) instalado e em execução
+- Subdomínio exclusivo para o n8n (ex: `n8n.crm.seudominio.com`) com DNS apontando para a mesma VPS
+- Chave de criptografia gerada com `openssl rand -hex 32` — **nunca altere após a primeira instalação**
+
+### Passo 1 — Adicionar variáveis n8n ao `.env`
+
+```env
+# Adicione ao final do .env existente
+N8N_DOMAIN=n8n.crm.seudominio.com
+N8N_ENCRYPTION_KEY=sua_chave_gerada_com_openssl
+```
+
+### Passo 2 — Adicionar rota n8n ao `traefik/dynamic.yml`
+
+Adicione dentro de `http.routers`:
+
+```yaml
+    n8n:
+      rule: "Host(`n8n.crm.seudominio.com`)"
+      entryPoints:
+        - websecure
+      service: n8n
+      tls:
+        certResolver: letsencryptresolver
+      priority: 1
+```
+
+E dentro de `http.services`:
+
+```yaml
+    n8n:
+      loadBalancer:
+        servers:
+          - url: "http://n8n:5678"
+```
+
+Reinicie o Traefik para aplicar:
+
+```sh
+docker compose restart traefik
+```
+
+### Passo 3 — Subir o n8n
+
+```sh
+cd /root/SofiaCRM
+docker compose -f docker-compose-n8n.yml --env-file .env pull
+docker compose -f docker-compose-n8n.yml --env-file .env up -d
+```
+
+### Verificação
+
+```sh
+docker ps --format '{{.Names}}: {{.Status}}' | grep n8n
+```
+
+Acesse em: `https://n8n.crm.seudominio.com`
+
+### Erros comuns no n8n
+
+| Erro | Causa | Solução |
+|---|---|---|
+| `502 Bad Gateway` | n8n ainda inicializando | Aguarde ~30s e recarregue |
+| Erro de criptografia após reiniciar | `N8N_ENCRYPTION_KEY` foi alterada | Restaure a chave original do `.env` |
+| SSL não gerado | DNS do subdomínio não propagado | Aguarde a propagação e reinicie o Traefik |

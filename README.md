@@ -1,6 +1,7 @@
 # SofiaCRM — Instalador Docker
 
-Instalador automático do [Sofia CRM](https://sofiacrm.com.br) para VPS Linux com Docker.
+Instalador automático do [Sofia CRM](https://sofiacrm.com.br) para VPS Linux com Docker.  
+Versão do script: **v1.2**
 
 ---
 
@@ -14,7 +15,7 @@ Instalador automático do [Sofia CRM](https://sofiacrm.com.br) para VPS Linux co
 
 ---
 
-## Instalação rápida
+## Início rápido
 
 ```sh
 git clone https://github.com/leostrongGG/sofiacrm-install.git /root/SofiaCRM
@@ -23,7 +24,18 @@ chmod +x sofia_install.sh
 ./sofia_install.sh
 ```
 
-O script vai perguntar:
+O script exibe um menu com **5 opções**:
+
+```
+  1) Instalar SofiaCRM Free   — nova instalação (edição Free)
+  2) Upgrade para SofiaCRM Pro — fazer upgrade da edição Free para PRO
+  3) Editar Instalação         — alterar configurações e reiniciar
+  4) Atualizar SofiaCRM        — atualizar imagens para a versão mais recente
+  5) Instalar n8n              — automação de workflows (opcional)
+```
+
+Para uma **nova instalação**, escolha a opção `1`. O script vai perguntar:
+
 1. **Domínio** do CRM (ex: `crm.seudominio.com`)
 2. **E-mail** para o certificado SSL (Let's Encrypt)
 3. **Storage de mídia**: local (disco da VPS) ou S3 (Backblaze B2, AWS, R2...)
@@ -37,20 +49,32 @@ https://crm.seudominio.com/pages/install.html
 
 ---
 
-## O que o script faz
+## Opções do script
 
-| Passo | Ação |
-|---|---|
-| 1 | Verifica arquitetura AMD64 |
-| 2 | Instala Docker se necessário |
-| 3 | Pergunta domínio, e-mail e tipo de storage |
-| 4 | Gera automaticamente todas as senhas e tokens |
-| 5 | Cria o arquivo `.env` |
-| 6 | Gera configuração do Traefik com seu domínio e e-mail |
-| 7 | Sobe todos os serviços com um único `docker compose up -d` |
-| 8 | Aguarda o CRM inicializar e exibe a URL de acesso |
+### Opção 1 — Instalar Free
 
-> O banco de dados `crm` é criado automaticamente pelo PostgreSQL na primeira inicialização.
+Nova instalação completa. Instala Docker se necessário, coleta domínio e e-mail, gera todas as senhas, configura Traefik e sobe os 6 containers da edição Free.
+
+### Opção 2 — Upgrade para PRO
+
+Atualiza uma instalação Free existente para a edição PRO **sem perder dados**. Requer:
+- `LICENSE_TOKEN` — fornecido por e-mail na compra da licença
+- IP público da VPS — para o gateway de chamadas de voz
+- Portas UDP/TCP **30000–30100** abertas no firewall da VPS
+
+O upgrade troca a imagem `sofiacrm-community:latest` → `sofiacrm-pro:latest`, adiciona o serviço `wa-call-gateway` e mantém banco, mídia e sessões WhatsApp intactos.
+
+### Opção 3 — Editar instalação
+
+Altera qualquer configuração (domínio, e-mail, storage, tokens PRO) e reinicia os containers com as novas definições. Para instalações PRO, permite também atualizar `LICENSE_TOKEN` e `VPS_PUBLIC_IP`.
+
+### Opção 4 — Atualizar
+
+Baixa as imagens Docker mais recentes (`docker compose pull`) e reinicia os containers. Se o n8n estiver instalado, também o atualiza.
+
+### Opção 5 — Instalar n8n
+
+Instala o [n8n](https://n8n.io) (automação de workflows) no mesmo servidor, integrado ao Traefik existente (HTTPS automático) e na mesma rede Docker (`sofiacrm_net`). Requer um subdomínio próprio (ex: `n8n.crm.seudominio.com`).
 
 ---
 
@@ -58,16 +82,19 @@ https://crm.seudominio.com/pages/install.html
 
 ```
 /root/SofiaCRM/
-├── sofia_install.sh            ← script de instalação
-├── .env                        ← criado pelo script (NÃO commitar!)
-├── .env.example                ← modelo de variáveis
+├── sofia_install.sh                    ← script principal (v1.2)
+├── .env                                ← gerado pelo script (NUNCA commitar!)
+├── .env.example                        ← modelo de variáveis
 ├── .gitignore
-├── docker-compose.yml          ← todos os serviços em um único arquivo
-├── INSTALLATION_SUMMARY.md     ← guia de instalação manual detalhado
+├── docker-compose.yml                  ← 6 serviços base (edição Free)
+├── docker-compose.override.yml         ← gerado no upgrade PRO (merge automático)
+├── docker-compose.override.yml.example ← template PRO (source do override)
+├── docker-compose-n8n.yml              ← compose separado para o n8n (opcional)
+├── INSTALLATION_SUMMARY.md             ← guia de instalação manual detalhado
 └── traefik/
     ├── traefik.yml             ← gerado pelo script (com seu e-mail)
     ├── traefik.yml.example     ← modelo com placeholders
-    ├── dynamic.yml             ← gerado pelo script (com seu domínio)
+    ├── dynamic.yml             ← gerado pelo script (com seu domínio + rotas)
     ├── dynamic.yml.example     ← modelo com placeholders
     └── acme.json               ← gerado pelo Traefik (certificados SSL)
 ```
@@ -76,21 +103,27 @@ https://crm.seudominio.com/pages/install.html
 
 ## Variáveis do `.env`
 
-| Variável | Descrição |
-|---|---|
-| `CRM_DOMAIN` | Domínio do CRM |
-| `ACME_EMAIL` | E-mail para Let's Encrypt |
-| `POSTGRES_USER` | Usuário do PostgreSQL (`postgres`, padrão da imagem) |
-| `POSTGRES_PASSWORD` | Senha do PostgreSQL (gerada automaticamente) |
-| `REDIS_PASSWORD` | Senha do Redis (gerada automaticamente) |
-| `JWT_SECRET` | Chave de autenticação JWT (gerada automaticamente) |
-| `INTERNAL_TOKEN` | Token interno crm_api ↔ whats-service (gerado automaticamente) |
-| `META_CLOUD_SERVICE_TOKEN` | Token interno crm_api ↔ meta-cloud-service (gerado automaticamente) |
-| `STORAGE_TYPE` | `local` ou `s3` |
+| Variável | Edição | Descrição |
+|---|---|---|
+| `CRM_EDITION` | Todas | `free` ou `pro` — definido automaticamente pelo script |
+| `CRM_DOMAIN` | Todas | Domínio do CRM |
+| `ACME_EMAIL` | Todas | E-mail para Let's Encrypt |
+| `POSTGRES_USER` | Todas | Sempre `postgres` (superusuário padrão da imagem Docker) |
+| `POSTGRES_PASSWORD` | Todas | Senha do PostgreSQL (gerada automaticamente) |
+| `REDIS_PASSWORD` | Todas | Senha do Redis (gerada automaticamente) |
+| `JWT_SECRET` | Todas | Chave de autenticação JWT (gerada automaticamente) |
+| `INTERNAL_TOKEN` | Todas | Token interno entre serviços (gerado automaticamente) |
+| `META_CLOUD_SERVICE_TOKEN` | Todas | Token interno crm_api ↔ meta-cloud-service (gerado automaticamente) |
+| `STORAGE_TYPE` | Todas | `local` ou `s3` |
+| `AWS_*` | Todas | Credenciais S3 — só necessário se `STORAGE_TYPE=s3` |
+| `LICENSE_TOKEN` | PRO | Token de ativação da licença (fornecido na compra) |
+| `VPS_PUBLIC_IP` | PRO | IP público da VPS para o gateway de voz |
+| `N8N_DOMAIN` | n8n | Subdomínio do n8n (ex: `n8n.crm.seudominio.com`) |
+| `N8N_ENCRYPTION_KEY` | n8n | Chave de criptografia do n8n (gerada automaticamente — nunca alterar após instalar) |
 
-> **Sobre `META_CLOUD_SERVICE_TOKEN`:** É um token que **você gera** para proteger a comunicação interna entre os dois containers Docker. Não tem relação com credenciais da Meta/Facebook — as credenciais do WhatsApp Business são configuradas depois dentro da interface do CRM.
+> **Sobre `META_CLOUD_SERVICE_TOKEN`:** Token gerado por você para proteger a comunicação interna entre containers. Não tem relação com credenciais da Meta/Facebook.
 
-> **Sobre usuários:** O PostgreSQL usa sempre o usuário `postgres` (superusuário padrão da imagem). O Redis não usa nome de usuário, apenas senha.
+> **Sobre usuários:** O PostgreSQL usa sempre `postgres`. O Redis não usa nome de usuário, apenas senha.
 
 ---
 

@@ -1,0 +1,43 @@
+# =============================================================
+# SofiaCRM PRO — Docker Compose override (template)
+#
+# Este arquivo é usado de duas formas:
+#   1. AUTOMÁTICO: o script sofia_install.sh copia este arquivo
+#      para docker-compose.override.yml ao executar o upgrade PRO.
+#   2. MANUAL: copie manualmente e certifique-se que o .env
+#      contém CRM_EDITION=pro, LICENSE_TOKEN e VPS_PUBLIC_IP.
+#
+# Após copiar, execute:
+#   docker compose pull && docker compose down && docker compose up -d
+#
+# O Docker Compose lê docker-compose.yml + docker-compose.override.yml
+# automaticamente, sem nenhuma flag adicional.
+# =============================================================
+services:
+
+  # Substitui a imagem Free pela PRO e injeta a licença
+  crm_api:
+    image: inovanode/sofiacrm-pro:latest
+    environment:
+      LICENSE_TOKEN: ${LICENSE_TOKEN}
+
+  # Serviço exclusivo da edição PRO — gateway de chamadas de voz via WhatsApp
+  wa-call-gateway:
+    image: inovanode/sofiacrm-gateway:latest
+    container_name: crm_wa_gateway
+    restart: always
+    depends_on:
+      crm_api:
+        condition: service_healthy
+    environment:
+      PORT: 8091
+      GATEWAY_UDP_MIN: 30000
+      GATEWAY_UDP_MAX: 30100
+      GATEWAY_PUBLIC_IP: ${VPS_PUBLIC_IP}   # IP público da VPS (sem https://)
+      CRM_API_URL: http://crm_api:3000
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_TOKEN}
+    ports:
+      - "30000-30100:30000-30100/udp"
+      - "30000-30100:30000-30100/tcp"
+    networks:
+      - sofiacrm_net

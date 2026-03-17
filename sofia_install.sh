@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================
-#  SofiaCRM — Instalador Automático v1.1
+#  SofiaCRM — Instalador Automático v1.2
 #  Repositório: https://github.com/leostrongGG/sofiacrm-install
 # ==============================================================
 set -euo pipefail
@@ -37,6 +37,11 @@ AWS_REGION="${AWS_REGION:-}"
 AWS_S3_BUCKET_NAME="${AWS_S3_BUCKET_NAME:-}"
 AWS_S3_ENDPOINT="${AWS_S3_ENDPOINT:-}"
 AWS_S3_FORCE_PATH_STYLE="${AWS_S3_FORCE_PATH_STYLE:-false}"
+CRM_EDITION="${CRM_EDITION:-free}"
+LICENSE_TOKEN="${LICENSE_TOKEN:-}"
+VPS_PUBLIC_IP="${VPS_PUBLIC_IP:-}"
+N8N_DOMAIN="${N8N_DOMAIN:-}"
+N8N_ENCRYPTION_KEY="${N8N_ENCRYPTION_KEY:-}"
 
 # ── Banner ─────────────────────────────────────────────────────────────────────
 print_banner() {
@@ -44,7 +49,7 @@ print_banner() {
   echo -e "${CYAN}${BOLD}"
   echo "  ╔═══════════════════════════════════════════════════════╗"
   echo "  ║           Sofia CRM — Instalador Automático           ║"
-  echo "  ║                      v1.1                             ║"
+  echo "  ║                      v1.2                             ║"
   echo "  ╚═══════════════════════════════════════════════════════╝"
   echo -e "${NC}"
   echo ""
@@ -54,14 +59,16 @@ print_banner() {
 main_menu() {
   echo -e "${BLUE}${BOLD}  O que deseja fazer?${NC}"
   echo ""
-  echo "    1) Instalar   — nova instalação do SofiaCRM"
-  echo "    2) Editar     — alterar configurações e reiniciar"
-  echo "    3) Atualizar  — atualizar imagens para a versão mais recente"
+  echo "    1) Instalar SofiaCRM Free  — nova instalação (edição Free)"
+  echo "    2) Upgrade para SofiaCRM Pro — fazer upgrade da edição Free para PRO"
+  echo "    3) Editar Instalação        — alterar configurações e reiniciar"
+  echo "    4) Atualizar SofiaCRM       — atualizar imagens para a versão mais recente"
+  echo "    5) Instalar n8n             — automação de workflows (opcional)"
   echo ""
   while true; do
-    read -rp "  Escolha [1/2/3]: " MENU_CHOICE
-    [[ "$MENU_CHOICE" == "1" || "$MENU_CHOICE" == "2" || "$MENU_CHOICE" == "3" ]] && break
-    echo -e "${RED}  ✗ Digite 1, 2 ou 3${NC}"
+    read -rp "  Escolha [1/2/3/4/5]: " MENU_CHOICE
+    [[ "$MENU_CHOICE" =~ ^[12345]$ ]] && break
+    echo -e "${RED}  ✗ Digite 1, 2, 3, 4 ou 5${NC}"
   done
   echo ""
 }
@@ -169,6 +176,32 @@ collect_info() {
   echo ""
 }
 
+# ── Coleta de informações PRO ─────────────────────────────────────────────────
+collect_pro_info() {
+  echo ""
+  echo -e "${BLUE}${BOLD}─── Configuração PRO ──────────────────────────────────────────${NC}"
+  echo ""
+
+  local license_hint="${LICENSE_TOKEN:+ [configurado — Enter para manter]}"
+  local ip_hint="${VPS_PUBLIC_IP:+ [${VPS_PUBLIC_IP}]}"
+
+  while true; do
+    read -rp "  LICENSE_TOKEN (fornecido na compra da licença PRO)${license_hint}: " input
+    LICENSE_TOKEN="${input:-${LICENSE_TOKEN}}"
+    [[ -n "$LICENSE_TOKEN" ]] && break
+    echo -e "${RED}  ✗ LICENSE_TOKEN não pode ser vazio${NC}"
+  done
+
+  while true; do
+    read -rp "  IP público da VPS${ip_hint} (usado pelo gateway de voz, ex: 203.0.113.10): " input
+    VPS_PUBLIC_IP="${input:-${VPS_PUBLIC_IP}}"
+    [[ -n "$VPS_PUBLIC_IP" ]] && break
+    echo -e "${RED}  ✗ IP da VPS não pode ser vazio${NC}"
+  done
+
+  echo ""
+}
+
 # ── Geração de tokens ─────────────────────────────────────────────────────────
 generate_secrets() {
   echo -e "${YELLOW}→ Gerando senhas e tokens de segurança...${NC}"
@@ -191,35 +224,49 @@ create_env() {
 # NUNCA commitar ou compartilhar este arquivo!
 # =============================================================
 
-# Domínio e e-mail (usado pelo Traefik / Let's Encrypt)
+# =============================================================
+# EDIÇÃO
+# =============================================================
+CRM_EDITION=${CRM_EDITION}
+
+# =============================================================
+# ACESSO PÚBLICO — domínio e SSL
+# =============================================================
 CRM_DOMAIN=${CRM_DOMAIN}
 ACME_EMAIL=${ACME_EMAIL}
 
-# Banco de dados PostgreSQL
+# =============================================================
+# BANCO DE DADOS — PostgreSQL
 # Usuário padrão da imagem Docker: postgres (não é configurável)
+# =============================================================
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 
-# Redis
+# =============================================================
+# CACHE — Redis
 # Redis não usa nome de usuário — somente senha
+# =============================================================
 REDIS_PASSWORD=${REDIS_PASSWORD}
 
-# Segurança da aplicação
+# =============================================================
+# SEGURANÇA — tokens internos
 # JWT_SECRET: assina os tokens de sessão dos usuários do CRM
 # INTERNAL_TOKEN: autentica chamadas internas crm_api <-> whats-service
 # META_CLOUD_SERVICE_TOKEN: token INTERNO entre crm_api <-> meta-cloud-service
 #   (NÃO é da Meta/Facebook — é gerado por você para comunicação entre containers)
+# =============================================================
 JWT_SECRET=${JWT_SECRET}
 INTERNAL_TOKEN=${INTERNAL_TOKEN}
 META_CLOUD_SERVICE_TOKEN=${META_CLOUD_SERVICE_TOKEN}
 
-# Storage de mídia (local ou s3)
+# =============================================================
+# STORAGE DE MÍDIA
+# =============================================================
 STORAGE_TYPE=${STORAGE_TYPE}
 EOF
 
   if [ "$STORAGE_TYPE" == "s3" ]; then
     cat >> "$INSTALL_DIR/.env" <<EOF
-# S3 — Backblaze B2 / AWS S3 / Cloudflare R2 / MinIO
 AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
 AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
 AWS_REGION=${AWS_REGION}
@@ -229,7 +276,40 @@ AWS_S3_FORCE_PATH_STYLE=${AWS_S3_FORCE_PATH_STYLE}
 EOF
   fi
 
+  if [ "$CRM_EDITION" == "pro" ]; then
+    cat >> "$INSTALL_DIR/.env" <<EOF
+
+# =============================================================
+# PRO — Licença e gateway de voz
+# LICENSE_TOKEN: chave de ativação da licença Pro (fornecido na compra)
+# VPS_PUBLIC_IP: IP público da VPS (usado pelo wa-call-gateway)
+# =============================================================
+LICENSE_TOKEN=${LICENSE_TOKEN}
+VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
+EOF
+  fi
+
+  if [[ -n "$N8N_DOMAIN" ]]; then
+    cat >> "$INSTALL_DIR/.env" <<EOF
+
+# =============================================================
+# n8n — Automação de workflows
+# N8N_ENCRYPTION_KEY: chave de criptografia dos dados do n8n
+# NUNCA altere após a primeira instalação!
+# =============================================================
+N8N_DOMAIN=${N8N_DOMAIN}
+N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+EOF
+  fi
+
   echo -e "${GREEN}✓ .env gravado${NC}"
+}
+
+# ── Override PRO ──────────────────────────────────────────────────────────────
+create_pro_override() {
+  echo -e "${YELLOW}→ Criando configuração override PRO...${NC}"
+  cp "$INSTALL_DIR/docker-compose.override.yml.example" "$INSTALL_DIR/docker-compose.override.yml"
+  echo -e "${GREEN}✓ Override PRO criado (docker-compose.override.yml)${NC}"
 }
 
 # ── Traefik ───────────────────────────────────────────────────────────────────
@@ -277,6 +357,7 @@ log:
 accessLog: {}
 EOF
 
+  # Routers base do CRM
   cat > "$INSTALL_DIR/traefik/dynamic.yml" <<EOF
 http:
   routers:
@@ -306,6 +387,25 @@ http:
       tls:
         certResolver: letsencryptresolver
       priority: 20
+EOF
+
+  # Router n8n (adicionado apenas se N8N_DOMAIN estiver configurado)
+  if [[ -n "$N8N_DOMAIN" ]]; then
+    cat >> "$INSTALL_DIR/traefik/dynamic.yml" <<EOF
+
+    n8n:
+      rule: "Host(\`${N8N_DOMAIN}\`)"
+      entryPoints:
+        - websecure
+      service: n8n
+      tls:
+        certResolver: letsencryptresolver
+      priority: 1
+EOF
+  fi
+
+  # Services base do CRM
+  cat >> "$INSTALL_DIR/traefik/dynamic.yml" <<EOF
 
   services:
     crm_api:
@@ -318,6 +418,17 @@ http:
         servers:
           - url: "http://crm_meta_cloud:8090"
 EOF
+
+  # Service n8n
+  if [[ -n "$N8N_DOMAIN" ]]; then
+    cat >> "$INSTALL_DIR/traefik/dynamic.yml" <<EOF
+
+    n8n:
+      loadBalancer:
+        servers:
+          - url: "http://n8n:5678"
+EOF
+  fi
 
   echo -e "${GREEN}✓ Traefik configurado${NC}"
 }
@@ -352,9 +463,11 @@ wait_crm_healthy() {
 
 # ── Resumo final ──────────────────────────────────────────────────────────────
 print_summary() {
+  local edition_label="Free"
+  [[ "${CRM_EDITION:-free}" == "pro" ]] && edition_label="PRO"
   echo ""
   echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════${NC}"
-  echo -e "${GREEN}${BOLD}  ✓  SofiaCRM pronto!${NC}"
+  echo -e "${GREEN}${BOLD}  ✓  SofiaCRM ${edition_label} pronto!${NC}"
   echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════${NC}"
   echo ""
   echo -e "  ${BOLD}➜ Primeiro acesso — criar conta de administrador:${NC}"
@@ -375,9 +488,13 @@ print_summary() {
 action_instalar() {
   check_arch
   install_docker
+  CRM_EDITION="free"
+  LICENSE_TOKEN=""
+  VPS_PUBLIC_IP=""
   collect_info
   generate_secrets
   create_env
+  rm -f "$INSTALL_DIR/docker-compose.override.yml"
   setup_traefik
   start_services
   wait_crm_healthy
@@ -401,6 +518,11 @@ action_editar() {
 
   collect_info
 
+  # Se a instalação atual é PRO, permite atualizar LICENSE_TOKEN e VPS_PUBLIC_IP
+  if [ "${CRM_EDITION:-free}" == "pro" ]; then
+    collect_pro_info
+  fi
+
   echo -e "  ${BOLD}Senhas e tokens:${NC}"
   read -rp "  Deseja regenerar todas as senhas e tokens? [s/N]: " REGEN
   echo ""
@@ -411,6 +533,11 @@ action_editar() {
   fi
 
   create_env
+  if [ "$CRM_EDITION" == "pro" ]; then
+    create_pro_override
+  else
+    rm -f "$INSTALL_DIR/docker-compose.override.yml"
+  fi
   setup_traefik
 
   echo -e "${YELLOW}→ Reiniciando serviços com as novas configurações...${NC}"
@@ -427,6 +554,11 @@ action_atualizar() {
     exit 1
   fi
 
+  set -a
+  # shellcheck disable=SC1091
+  source "$INSTALL_DIR/.env"
+  set +a
+
   echo ""
   echo -e "${BLUE}${BOLD}─── Atualizando SofiaCRM ──────────────────────────────────────${NC}"
   echo ""
@@ -437,10 +569,179 @@ action_atualizar() {
   docker compose up -d
   wait_crm_healthy
 
+  # Atualiza n8n se estiver instalado
+  if [[ -n "${N8N_DOMAIN:-}" ]] && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^n8n$'; then
+    echo -e "${YELLOW}→ Atualizando n8n...${NC}"
+    docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" pull
+    docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" up -d
+    echo -e "${GREEN}✓ n8n atualizado${NC}"
+  fi
+
+  echo ""
+  local edition_label="Free"
+  [[ "${CRM_EDITION:-free}" == "pro" ]] && edition_label="PRO"
+  echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════${NC}"
+  echo -e "${GREEN}${BOLD}  ✓  SofiaCRM ${edition_label} atualizado com sucesso!${NC}"
+  echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════${NC}"
+  echo ""
+  echo -e "  ${BOLD}Containers em execução:${NC}"
+  docker ps --format "    {{.Names}}: {{.Status}}"
+  echo ""
+}
+
+# ── Ação 4: Upgrade para PRO ──────────────────────────────────────────────────
+action_upgrade_pro() {
+  if [ ! -f "$INSTALL_DIR/.env" ]; then
+    echo -e "${RED}✗ Arquivo .env não encontrado. Use a opção 1 para instalar primeiro.${NC}"
+    exit 1
+  fi
+
+  echo -e "${YELLOW}→ Carregando configuração atual...${NC}"
+  set -a
+  # shellcheck disable=SC1091
+  source "$INSTALL_DIR/.env"
+  set +a
+  echo -e "${GREEN}✓ Configurações carregadas${NC}"
+
+  if [ "${CRM_EDITION:-free}" == "pro" ]; then
+    echo ""
+    echo -e "${YELLOW}⚠  Esta instalação já está na edição PRO.${NC}"
+    echo -e "   Use a opção 2 (Editar) para alterar configurações PRO."
+    echo ""
+    exit 0
+  fi
+
+  echo ""
+  echo -e "${BLUE}${BOLD}─── Upgrade Free → PRO ────────────────────────────────────────${NC}"
+  echo ""
+  echo -e "  Este upgrade irá:"
+  echo -e "  ${GREEN}✓${NC} Manter todos os dados (banco, mídia, sessões WhatsApp)"
+  echo -e "  ${GREEN}✓${NC} Trocar a imagem para sofiacrm-pro:latest"
+  echo -e "  ${GREEN}✓${NC} Adicionar o serviço wa-call-gateway (chamadas de voz)"
+  echo -e "  ${GREEN}✓${NC} Manter todas as senhas e tokens existentes"
+  echo ""
+  read -rp "  Confirmar upgrade? [s/N]: " CONFIRM_UPGRADE
+  echo ""
+  [[ "${CONFIRM_UPGRADE,,}" != "s" ]] && { echo -e "${YELLOW}  ✗ Upgrade cancelado.${NC}"; exit 0; }
+
+  CRM_EDITION="pro"
+  collect_pro_info
+  create_env
+  create_pro_override
+
+  echo -e "${YELLOW}→ Baixando imagens PRO...${NC}"
+  docker compose pull
+  echo -e "${YELLOW}→ Reiniciando serviços...${NC}"
+  docker compose down
+  docker compose up -d
+  wait_crm_healthy
+  print_summary
+}
+
+# ── Coleta de informações n8n ────────────────────────────────────────────────────
+collect_n8n_info() {
+  echo ""
+  echo -e "${BLUE}${BOLD}─── Configuração n8n ───────────────────────────────────────────${NC}"
+  echo ""
+  echo -e "  O n8n será exposto em um subdomínio próprio (ex: n8n.crm.seudominio.com)."
+  echo -e "  Certifique-se que o DNS deste subdomínio já aponta para o IP desta VPS."
+  echo ""
+
+  local n8n_hint="${N8N_DOMAIN:+ [${N8N_DOMAIN}]}"
+  while true; do
+    read -rp "  Domínio do n8n${n8n_hint} (ex: n8n.crm.seudominio.com): " input
+    N8N_DOMAIN="${input:-${N8N_DOMAIN}}"
+    [[ -n "$N8N_DOMAIN" ]] && break
+    echo -e "${RED}  ✗ Domínio não pode ser vazio${NC}"
+  done
+
+  if [[ -z "$N8N_ENCRYPTION_KEY" ]]; then
+    N8N_ENCRYPTION_KEY=$(openssl rand -hex 32)
+    echo -e "${GREEN}✓ N8N_ENCRYPTION_KEY gerada automaticamente${NC}"
+  else
+    echo -e "${GREEN}✓ N8N_ENCRYPTION_KEY mantida do .env${NC}"
+  fi
+
+  echo ""
+}
+
+# ── Ação 5: Instalar n8n ────────────────────────────────────────────────────
+action_instalar_n8n() {
+  if [ ! -f "$INSTALL_DIR/.env" ]; then
+    echo -e "${RED}✗ Arquivo .env não encontrado. Use a opção 1 para instalar o SofiaCRM primeiro.${NC}"
+    exit 1
+  fi
+
+  echo -e "${YELLOW}→ Carregando configuração atual...${NC}"
+  set -a
+  # shellcheck disable=SC1091
+  source "$INSTALL_DIR/.env"
+  set +a
+
+  if ! docker network ls --format '{{.Name}}' | grep -q '^sofiacrm_net$'; then
+    echo -e "${RED}✗ Rede sofiacrm_net não encontrada.${NC}"
+    echo -e "   Certifique-se que o SofiaCRM está em execução antes de instalar o n8n."
+    exit 1
+  fi
+
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^n8n$'; then
+    echo ""
+    echo -e "${YELLOW}⚠  Container n8n já existe.${NC}"
+    read -rp "  Deseja reconfigurar e reiniciar o n8n? [s/N]: " CONFIRM_N8N
+    echo ""
+    [[ "${CONFIRM_N8N,,}" != "s" ]] && { echo -e "${YELLOW}  Cancelado.${NC}"; exit 0; }
+  fi
+
+  echo ""
+  echo -e "${BLUE}${BOLD}─── Instalando n8n ─────────────────────────────────────────────${NC}"
+  collect_n8n_info
+
+  # Persiste as variáveis n8n no .env (remove bloco anterior se existir, depois adiciona)
+  # Remove linhas antigas do bloco n8n se já existirem
+  if grep -q '^N8N_DOMAIN=' "$INSTALL_DIR/.env" 2>/dev/null; then
+    # Reescreve .env sem as linhas n8n (serão re-adicionadas abaixo)
+    grep -v '^N8N_DOMAIN=\|^N8N_ENCRYPTION_KEY=\|^# n8n \|^# N8N_ENCRYPTION_KEY:\|^# NUNCA altere após' "$INSTALL_DIR/.env" > "$INSTALL_DIR/.env.tmp"
+    mv "$INSTALL_DIR/.env.tmp" "$INSTALL_DIR/.env"
+  fi
+  cat >> "$INSTALL_DIR/.env" <<EOF
+
+# n8n — Automação de workflows
+# N8N_ENCRYPTION_KEY: chave de criptografia dos dados do n8n (gerada automaticamente)
+N8N_DOMAIN=${N8N_DOMAIN}
+N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+EOF
+
+  # Atualiza dynamic.yml do Traefik para incluir rota n8n
+  setup_traefik
+  docker compose restart traefik
+
+  echo -e "${YELLOW}→ Subindo n8n...${NC}"
+  docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" pull
+  docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" up -d
+
+  echo ""
+  echo -e "${YELLOW}→ Aguardando n8n inicializar...${NC}"
+  local n8n_ready=false
+  for i in $(seq 1 20); do
+    if docker exec n8n wget -q --tries=1 --spider http://localhost:5678/ 2>/dev/null; then
+      echo -e "${GREEN}✓ n8n pronto!${NC}"
+      n8n_ready=true
+      break
+    fi
+    sleep 3
+    printf "  tentativa %d/20...\r" "$i"
+  done
+  if [ "$n8n_ready" = false ]; then
+    echo -e "${YELLOW}⚠ n8n ainda inicializando. Verifique com: docker logs n8n --tail 20${NC}"
+  fi
+
   echo ""
   echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════${NC}"
-  echo -e "${GREEN}${BOLD}  ✓  SofiaCRM atualizado com sucesso!${NC}"
+  echo -e "${GREEN}${BOLD}  ✓  n8n instalado!${NC}"
   echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════${NC}"
+  echo ""
+  echo -e "  ${BOLD}➜ Acesse o n8n em:${NC}"
+  echo -e "     ${CYAN}https://${N8N_DOMAIN}${NC}"
   echo ""
   echo -e "  ${BOLD}Containers em execução:${NC}"
   docker ps --format "    {{.Names}}: {{.Status}}"
@@ -453,6 +754,8 @@ main_menu
 
 case "$MENU_CHOICE" in
   1) action_instalar ;;
-  2) action_editar ;;
-  3) action_atualizar ;;
+  2) action_upgrade_pro ;;
+  3) action_editar ;;
+  4) action_atualizar ;;
+  5) action_instalar_n8n ;;
 esac

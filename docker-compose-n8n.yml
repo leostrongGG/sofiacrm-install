@@ -1,0 +1,38 @@
+# =============================================================
+# n8n — Automação de workflows (opcional)
+#
+# Usa a rede sofiacrm_net e o Traefik já existentes do SofiaCRM.
+# As variáveis N8N_DOMAIN e N8N_ENCRYPTION_KEY devem estar no
+# .env principal (preenchidas pelo script sofia_install.sh).
+#
+# Para instalar manualmente sem o script:
+#   docker compose -f docker-compose-n8n.yml up -d
+# =============================================================
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n
+    restart: always
+    environment:
+      N8N_HOST: ${N8N_DOMAIN}
+      WEBHOOK_URL: https://${N8N_DOMAIN}/
+      N8N_EDITOR_BASE_URL: https://${N8N_DOMAIN}/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      NODE_ENV: production
+      EXECUTIONS_PROCESS: main
+      GENERIC_TIMEZONE: America/Sao_Paulo
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - sofiacrm_net
+
+volumes:
+  n8n_data:
+
+networks:
+  sofiacrm_net:
+    external: true
+    name: sofiacrm_net

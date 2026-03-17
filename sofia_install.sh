@@ -144,14 +144,13 @@ collect_info() {
     local region_hint="${AWS_REGION:+ [${AWS_REGION}]}"
     local bucket_hint="${AWS_S3_BUCKET_NAME:+ [${AWS_S3_BUCKET_NAME}]}"
     local endpoint_hint="${AWS_S3_ENDPOINT:+ [${AWS_S3_ENDPOINT}]}"
-    local secret_hint="${AWS_SECRET_ACCESS_KEY:+ [configurada — Enter para manter]}"
+    local secret_hint="${AWS_SECRET_ACCESS_KEY:+ [${AWS_SECRET_ACCESS_KEY}]}"
 
     read -rp  "    Access Key ID${key_hint}: " input
     AWS_ACCESS_KEY_ID="${input:-${AWS_ACCESS_KEY_ID}}"
 
-    read -rsp "    Secret Access Key${secret_hint}: " input
+    read -rp "    Secret Access Key${secret_hint}: " input
     AWS_SECRET_ACCESS_KEY="${input:-${AWS_SECRET_ACCESS_KEY}}"
-    echo ""
 
     read -rp  "    Region (ex: us-east-005)${region_hint}: " input
     AWS_REGION="${input:-${AWS_REGION}}"

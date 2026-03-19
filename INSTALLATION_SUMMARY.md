@@ -325,6 +325,7 @@ docker logs crm_api --tail 10
 
 - Instalação Free funcionando
 - `LICENSE_TOKEN` — fornecido por e-mail na compra da licença PRO
+- Usuário e access token do Docker Hub — fornecidos junto com a licença (necessários para baixar as imagens privadas)
 - IP público da VPS — usado pelo `wa-call-gateway` para roteamento de chamadas
 - Portas UDP/TCP **30000-30100** abertas no firewall da VPS
 
@@ -335,7 +336,11 @@ docker logs crm_api --tail 10
 CRM_EDITION=pro
 LICENSE_TOKEN=seu_token_de_licenca
 VPS_PUBLIC_IP=203.0.113.10
+DOCKERHUB_USER=usuario_fornecido_na_compra
+DOCKERHUB_PASSWORD=access_token_fornecido_na_compra
 ```
+
+> **Sobre o Docker Hub:** As imagens PRO são privadas. O usuário e access token são fornecidos pelo suporte SofiaCRM junto com o `LICENSE_TOKEN`. O access token pode expirar — se o pull falhar com `unauthorized`, solicite um novo token ao suporte.
 
 ### Passo 2 — Criar `docker-compose.override.yml`
 
@@ -416,14 +421,14 @@ crm_wa_gateway:     Up X minutes
 ### Pré-requisitos n8n
 
 - SofiaCRM (Free ou PRO) instalado e em execução
-- Subdomínio exclusivo para o n8n (ex: `n8n.crm.seudominio.com`) com DNS apontando para a mesma VPS
+- Subdomínio exclusivo para o n8n (ex: `n8n.seudominio.com`) com DNS apontando para a mesma VPS
 - Chave de criptografia gerada com `openssl rand -hex 32` — **nunca altere após a primeira instalação**
 
 ### Passo 1 — Adicionar variáveis n8n ao `.env`
 
 ```env
 # Adicione ao final do .env existente
-N8N_DOMAIN=n8n.crm.seudominio.com
+N8N_DOMAIN=n8n.seudominio.com
 N8N_ENCRYPTION_KEY=sua_chave_gerada_com_openssl
 ```
 
@@ -433,7 +438,7 @@ Adicione dentro de `http.routers`:
 
 ```yaml
     n8n:
-      rule: "Host(`n8n.crm.seudominio.com`)"
+      rule: "Host(`n8n.seudominio.com`)"
       entryPoints:
         - websecure
       service: n8n
@@ -471,7 +476,7 @@ docker compose -f docker-compose-n8n.yml --env-file .env up -d
 docker ps --format '{{.Names}}: {{.Status}}' | grep n8n
 ```
 
-Acesse em: `https://n8n.crm.seudominio.com`
+Acesse em: `https://n8n.seudominio.com`
 
 ### Erros comuns no n8n
 

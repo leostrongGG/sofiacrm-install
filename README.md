@@ -59,6 +59,7 @@ Nova instalação completa. Instala Docker se necessário, coleta domínio e e-m
 
 Atualiza uma instalação Free existente para a edição PRO **sem perder dados**. Requer:
 - `LICENSE_TOKEN` — fornecido por e-mail na compra da licença
+- Usuário e access token do Docker Hub — fornecidos junto com a licença (imagens privadas)
 - IP público da VPS — para o gateway de chamadas de voz
 - Portas UDP/TCP **30000–30100** abertas no firewall da VPS
 
@@ -74,7 +75,7 @@ Baixa as imagens Docker mais recentes (`docker compose pull`) e reinicia os cont
 
 ### Opção 5 — Instalar n8n
 
-Instala o [n8n](https://n8n.io) (automação de workflows) no mesmo servidor, integrado ao Traefik existente (HTTPS automático) e na mesma rede Docker (`sofiacrm_net`). Requer um subdomínio próprio (ex: `n8n.crm.seudominio.com`).
+Instala o [n8n](https://n8n.io) (automação de workflows) no mesmo servidor, integrado ao Traefik existente (HTTPS automático) e na mesma rede Docker (`sofiacrm_net`). Requer um subdomínio próprio (ex: `n8n.seudominio.com`).
 
 ---
 
@@ -118,7 +119,9 @@ Instala o [n8n](https://n8n.io) (automação de workflows) no mesmo servidor, in
 | `AWS_*` | Todas | Credenciais S3 — só necessário se `STORAGE_TYPE=s3` |
 | `LICENSE_TOKEN` | PRO | Token de ativação da licença (fornecido na compra) |
 | `VPS_PUBLIC_IP` | PRO | IP público da VPS para o gateway de voz |
-| `N8N_DOMAIN` | n8n | Subdomínio do n8n (ex: `n8n.crm.seudominio.com`) |
+| `DOCKERHUB_USER` | PRO | Usuário Docker Hub para baixar imagens privadas (fornecido na compra) |
+| `DOCKERHUB_PASSWORD` | PRO | Access token Docker Hub (fornecido na compra — pode expirar, peça novo ao suporte) |
+| `N8N_DOMAIN` | n8n | Subdomínio do n8n (ex: `n8n.seudominio.com`) |
 | `N8N_ENCRYPTION_KEY` | n8n | Chave de criptografia do n8n (gerada automaticamente — nunca alterar após instalar) |
 
 > **Sobre `META_CLOUD_SERVICE_TOKEN`:** Token gerado por você para proteger a comunicação interna entre containers. Não tem relação com credenciais da Meta/Facebook.

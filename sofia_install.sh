@@ -40,6 +40,8 @@ AWS_S3_FORCE_PATH_STYLE="${AWS_S3_FORCE_PATH_STYLE:-false}"
 CRM_EDITION="${CRM_EDITION:-free}"
 LICENSE_TOKEN="${LICENSE_TOKEN:-}"
 VPS_PUBLIC_IP="${VPS_PUBLIC_IP:-}"
+DOCKERHUB_USER="${DOCKERHUB_USER:-}"
+DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-}"
 N8N_DOMAIN="${N8N_DOMAIN:-}"
 N8N_ENCRYPTION_KEY="${N8N_ENCRYPTION_KEY:-}"
 
@@ -199,6 +201,24 @@ collect_pro_info() {
   done
 
   echo ""
+  echo -e "  ${BOLD}Credenciais Docker Hub (necessárias para baixar as imagens PRO):${NC}"
+  echo -e "  As credenciais padrão já estão preenchidas — pressione Enter para usá-las."
+  echo ""
+
+  # Credenciais padrão fornecidas para todos os clientes PRO
+  DOCKERHUB_USER="${DOCKERHUB_USER:-sofiacrm}"
+  DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-dkpr_pat_0aX7T7KA5-IT3gXUXbDet34pO0vU0}"
+
+  local dh_user_hint=" [${DOCKERHUB_USER}]"
+  local dh_pass_hint=" [configurado — Enter para manter]"
+
+  read -rp "  Usuário Docker Hub${dh_user_hint}: " input
+  DOCKERHUB_USER="${input:-${DOCKERHUB_USER}}"
+
+  read -rp "  Senha / Access Token Docker Hub${dh_pass_hint}: " input
+  DOCKERHUB_PASSWORD="${input:-${DOCKERHUB_PASSWORD}}"
+
+  echo ""
 }
 
 # ── Geração de tokens ─────────────────────────────────────────────────────────
@@ -282,9 +302,12 @@ EOF
 # PRO — Licença e gateway de voz
 # LICENSE_TOKEN: chave de ativação da licença Pro (fornecido na compra)
 # VPS_PUBLIC_IP: IP público da VPS (usado pelo wa-call-gateway)
+# DOCKERHUB_USER / DOCKERHUB_PASSWORD: credenciais para baixar imagens privadas
 # =============================================================
 LICENSE_TOKEN=${LICENSE_TOKEN}
 VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
+DOCKERHUB_USER=${DOCKERHUB_USER}
+DOCKERHUB_PASSWORD=${DOCKERHUB_PASSWORD}
 EOF
   fi
 
@@ -302,6 +325,18 @@ EOF
   fi
 
   echo -e "${GREEN}✓ .env gravado${NC}"
+}
+
+# ── Login Docker Hub para imagens PRO ────────────────────────────────────────
+docker_login_pro() {
+  echo -e "${YELLOW}→ Autenticando no Docker Hub...${NC}"
+  if echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin 2>&1; then
+    echo -e "${GREEN}✓ Docker Hub autenticado${NC}"
+  else
+    echo -e "${RED}✗ Falha na autenticação Docker Hub.${NC}"
+    echo -e "   Verifique usuário e senha/token em: hub.docker.com → Account Settings → Personal access tokens"
+    exit 1
+  fi
 }
 
 # ── Override PRO ──────────────────────────────────────────────────────────────
@@ -562,6 +597,9 @@ action_atualizar() {
   echo -e "${BLUE}${BOLD}─── Atualizando SofiaCRM ──────────────────────────────────────${NC}"
   echo ""
   echo -e "${YELLOW}→ Baixando imagens mais recentes...${NC}"
+  if [ "${CRM_EDITION:-free}" == "pro" ]; then
+    docker_login_pro
+  fi
   docker compose pull
   echo -e "${YELLOW}→ Reiniciando containers...${NC}"
   docker compose down
@@ -625,11 +663,28 @@ action_upgrade_pro() {
 
   CRM_EDITION="pro"
   collect_pro_info
+  docker_login_pro
   create_env
   create_pro_override
 
   echo -e "${YELLOW}→ Baixando imagens PRO...${NC}"
+  set +e
   docker compose pull
+  PULL_STATUS=$?
+  set -e
+
+  if [ "$PULL_STATUS" -ne 0 ]; then
+    echo -e "${RED}✗ Falha ao baixar imagens PRO. Revertendo para edição Free...${NC}"
+    CRM_EDITION="free"
+    LICENSE_TOKEN=""
+    VPS_PUBLIC_IP=""
+    DOCKERHUB_USER=""
+    DOCKERHUB_PASSWORD=""
+    create_env
+    rm -f "$INSTALL_DIR/docker-compose.override.yml"
+    exit 1
+  fi
+
   echo -e "${YELLOW}→ Reiniciando serviços...${NC}"
   docker compose down
   docker compose up -d
@@ -642,13 +697,13 @@ collect_n8n_info() {
   echo ""
   echo -e "${BLUE}${BOLD}─── Configuração n8n ───────────────────────────────────────────${NC}"
   echo ""
-  echo -e "  O n8n será exposto em um subdomínio próprio (ex: n8n.crm.seudominio.com)."
+  echo -e "  O n8n será exposto em um subdomínio próprio (ex: n8n.seudominio.com)."
   echo -e "  Certifique-se que o DNS deste subdomínio já aponta para o IP desta VPS."
   echo ""
 
   local n8n_hint="${N8N_DOMAIN:+ [${N8N_DOMAIN}]}"
   while true; do
-    read -rp "  Domínio do n8n${n8n_hint} (ex: n8n.crm.seudominio.com): " input
+    read -rp "  Domínio do n8n${n8n_hint} (ex: n8n.seudominio.com): " input
     N8N_DOMAIN="${input:-${N8N_DOMAIN}}"
     [[ -n "$N8N_DOMAIN" ]] && break
     echo -e "${RED}  ✗ Domínio não pode ser vazio${NC}"

@@ -202,21 +202,25 @@ collect_pro_info() {
 
   echo ""
   echo -e "  ${BOLD}Credenciais Docker Hub (necessárias para baixar as imagens PRO):${NC}"
-  echo -e "  As credenciais padrão já estão preenchidas — pressione Enter para usá-las."
+  echo -e "  Usuário e access token fornecidos pelo suporte SofiaCRM na compra da licença."
   echo ""
 
-  # Credenciais padrão fornecidas para todos os clientes PRO
-  DOCKERHUB_USER="${DOCKERHUB_USER:-sofiacrm}"
-  DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-dkpr_pat_0aX7T7KA5-IT3gXUXbDet34pO0vU0}"
+  local dh_user_hint="${DOCKERHUB_USER:+ [${DOCKERHUB_USER}]}"
+  local dh_pass_hint="${DOCKERHUB_PASSWORD:+ [configurado — Enter para manter]}"
 
-  local dh_user_hint=" [${DOCKERHUB_USER}]"
-  local dh_pass_hint=" [configurado — Enter para manter]"
+  while true; do
+    read -rp "  Usuário Docker Hub${dh_user_hint}: " input
+    DOCKERHUB_USER="${input:-${DOCKERHUB_USER}}"
+    [[ -n "$DOCKERHUB_USER" ]] && break
+    echo -e "${RED}  ✗ Usuário não pode ser vazio${NC}"
+  done
 
-  read -rp "  Usuário Docker Hub${dh_user_hint}: " input
-  DOCKERHUB_USER="${input:-${DOCKERHUB_USER}}"
-
-  read -rp "  Senha / Access Token Docker Hub${dh_pass_hint}: " input
-  DOCKERHUB_PASSWORD="${input:-${DOCKERHUB_PASSWORD}}"
+  while true; do
+    read -rp "  Access Token Docker Hub${dh_pass_hint}: " input
+    DOCKERHUB_PASSWORD="${input:-${DOCKERHUB_PASSWORD}}"
+    [[ -n "$DOCKERHUB_PASSWORD" ]] && break
+    echo -e "${RED}  ✗ Token não pode ser vazio${NC}"
+  done
 
   echo ""
 }

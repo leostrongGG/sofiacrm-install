@@ -1,7 +1,7 @@
 # SofiaCRM — Instalador Docker
 
 Instalador automático do [Sofia CRM](https://sofiacrm.com.br) para VPS Linux com Docker.  
-Versão do script: **v1.2**
+Versão do script: **v1.3**
 
 ---
 
@@ -27,7 +27,7 @@ chmod +x sofia_install.sh
 O script exibe um menu com **5 opções**:
 
 ```
-  1) Instalar SofiaCRM Free   — nova instalação (edição Free)
+  1) Instalar SofiaCRM        — nova instalação (Free ou PRO)
   2) Upgrade para SofiaCRM Pro — fazer upgrade da edição Free para PRO
   3) Editar Instalação         — alterar configurações e reiniciar
   4) Atualizar SofiaCRM        — atualizar imagens para a versão mais recente
@@ -36,9 +36,10 @@ O script exibe um menu com **5 opções**:
 
 Para uma **nova instalação**, escolha a opção `1`. O script vai perguntar:
 
-1. **Domínio** do CRM (ex: `crm.seudominio.com`)
-2. **E-mail** para o certificado SSL (Let's Encrypt)
-3. **Storage de mídia**: local (disco da VPS) ou S3 (Backblaze B2, AWS, R2...)
+1. **Edição**: `F` para Free ou `P` para PRO
+2. **Domínio** do CRM (ex: `crm.seudominio.com`)
+3. **E-mail** para o certificado SSL (Let's Encrypt)
+4. **Storage de mídia**: local (disco da VPS) ou S3 (Backblaze B2, AWS, R2...)
 
 Tudo o mais — senhas, tokens, banco de dados — é gerado e configurado automaticamente.
 
@@ -51,9 +52,9 @@ https://crm.seudominio.com/pages/install.html
 
 ## Opções do script
 
-### Opção 1 — Instalar Free
+### Opção 1 — Instalar Free ou PRO
 
-Nova instalação completa. Instala Docker se necessário, coleta domínio e e-mail, gera todas as senhas, configura Traefik e sobe os 6 containers da edição Free.
+Nova instalação completa. Pergunta a edição desejada (`F` = Free / `P` = PRO), instala Docker se necessário, coleta domínio e e-mail, gera todas as senhas, configura Traefik e sobe os containers. A edição PRO requer `LICENSE_TOKEN` e credenciais Docker Hub fornecidas na compra.
 
 ### Opção 2 — Upgrade para PRO
 
@@ -63,7 +64,14 @@ Atualiza uma instalação Free existente para a edição PRO **sem perder dados*
 - IP público da VPS — para o gateway de chamadas de voz
 - Portas UDP/TCP **30000–30100** abertas no firewall da VPS
 
-O upgrade troca a imagem `sofiacrm-community:latest` → `sofiacrm-pro:latest`, adiciona o serviço `wa-call-gateway` e mantém banco, mídia e sessões WhatsApp intactos.
+O upgrade executa as seguintes etapas automaticamente:
+1. **(Opcional)** Backup completo do banco (`pg_dump`)
+2. Remove o volume PostgreSQL antigo (schema Free incompatível com PRO)
+3. Sobe o PRO com `initDb` para criar o schema nativo PRO
+4. Restaura os dados do backup (tenants, usuários, contatos, histórico)
+5. Valida a licença e verifica integridade dos dados
+
+Mídia e sessões WhatsApp são preservados (volumes separados, não são tocados).
 
 ### Opção 3 — Editar instalação
 
@@ -83,7 +91,7 @@ Instala o [n8n](https://n8n.io) (automação de workflows) no mesmo servidor, in
 
 ```
 /root/SofiaCRM/
-├── sofia_install.sh                    ← script principal (v1.2)
+├── sofia_install.sh                    ← script principal (v1.3)
 ├── .env                                ← gerado pelo script (NUNCA commitar!)
 ├── .env.example                        ← modelo de variáveis
 ├── .gitignore

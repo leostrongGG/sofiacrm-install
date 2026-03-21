@@ -278,7 +278,7 @@ docker logs crm_api --tail 10
 
 ```
 /root/SofiaCRM/
-├── sofia_install.sh                    ← script de instalação automática (v1.2)
+├── sofia_install.sh                    ← script de instalação automática (v1.3)
 ├── .env                                ← criado por você (NUNCA commitar!)
 ├── .env.example                        ← modelo de variáveis
 ├── .gitignore
@@ -379,11 +379,35 @@ services:
 
 ### Passo 3 — Aplicar o upgrade
 
+> ⚠️ O volume PostgreSQL precisa ser recriado para o PRO aplicar seu schema nativo via `initDb`. Faça o backup antes!
+
 ```sh
 cd /root/SofiaCRM
-docker compose pull          # baixa imagens PRO
-docker compose down          # para os containers
-docker compose up -d         # sobe com override aplicado
+
+# 1. Backup dos dados
+docker exec sofiacrm-pgvector pg_dump -U postgres -d crm --no-owner --no-acl -Fc \
+  > backup_free_$(date +%Y%m%d_%H%M%S).dump
+
+# 2. Parar e remover containers + volume PostgreSQL antigo
+docker compose down
+docker volume rm sofiacrm_postgres18_data
+
+# 3. Subir PRO (initDb cria o schema PRO automaticamente)
+docker compose up sofiacrm-pgvector -d
+sleep 15
+docker compose up crm_api -d
+# aguardar crm_api ficar healthy antes de continuar
+until docker inspect crm_api --format '{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; do
+  sleep 5
+done
+
+# 4. Restaurar dados
+docker compose down
+docker exec -i sofiacrm-pgvector pg_restore -U postgres -d crm \
+  --no-owner --no-acl --data-only --disable-triggers < backup_free_*.dump
+
+# 5. Subir todos os serviços
+docker compose up -d
 ```
 
 ### Verificação
@@ -411,6 +435,7 @@ crm_wa_gateway:     Up X minutes
 | `crm_api` não inicia após upgrade | `LICENSE_TOKEN` inválido ou ausente | Confira o token no `.env` e no override |
 | `crm_wa_gateway` não conecta | IP da VPS incorreto | Confira `VPS_PUBLIC_IP` no `.env` |
 | Portas 30000-30100 recusadas | Firewall bloqueando | Abra UDP/TCP 30000-30100 no firewall da VPS |
+| `pg_restore` retorna erros de duplicidade | Dados já existem no schema novo | Use `--data-only --disable-triggers` conforme o guia |
 
 ---
 

@@ -184,6 +184,13 @@ collect_pro_info() {
   echo ""
 
   local license_hint="${LICENSE_TOKEN:+ [configurado — Enter para manter]}"
+
+  # Auto-detect IP público se ainda não configurado
+  if [[ -z "$VPS_PUBLIC_IP" ]]; then
+    local detected_ip
+    detected_ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "")
+    [[ -n "$detected_ip" ]] && VPS_PUBLIC_IP="$detected_ip"
+  fi
   local ip_hint="${VPS_PUBLIC_IP:+ [${VPS_PUBLIC_IP}]}"
 
   while true; do
@@ -671,6 +678,18 @@ action_upgrade_pro() {
   create_env
   create_pro_override
 
+  echo -e "${YELLOW}→ Fazendo backup do banco antes do upgrade...${NC}"
+  BACKUP_FILE="$INSTALL_DIR/backup_free_$(date +%Y%m%d_%H%M%S).dump"
+  if docker exec sofiacrm-pgvector pg_dump -U postgres -Fc crm > "$BACKUP_FILE" 2>/dev/null; then
+    echo -e "${GREEN}✓ Backup salvo: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))${NC}"
+    echo -e "   ${YELLOW}Guarde este arquivo — use-o para rollback se necessário.${NC}"
+  else
+    echo -e "${YELLOW}⚠ Não foi possível criar backup do banco (PostgreSQL pode estar indisponível).${NC}"
+    echo -e "   Deseja continuar mesmo assim?"
+    read -rp "   Continuar sem backup? [s/N]: " SKIP_BACKUP
+    [[ "${SKIP_BACKUP,,}" != "s" ]] && { echo -e "${YELLOW}  Upgrade cancelado.${NC}"; exit 0; }
+  fi
+
   echo -e "${YELLOW}→ Baixando imagens PRO...${NC}"
   set +e
   docker compose pull
@@ -693,6 +712,16 @@ action_upgrade_pro() {
   docker compose down
   docker compose up -d
   wait_crm_healthy
+
+  echo -e "${YELLOW}→ Verificando licença PRO nos logs...${NC}"
+  sleep 5
+  if docker logs crm_api 2>&1 | grep -qi "licen.*v.*lid\|Token de licen"; then
+    echo -e "${GREEN}✓ Licença PRO validada com sucesso${NC}"
+  else
+    echo -e "${YELLOW}⚠ Não foi possível confirmar a licença nos logs ainda.${NC}"
+    echo -e "   Verifique com: docker logs crm_api | grep -i licen${NC}"
+  fi
+
   print_summary
 }
 

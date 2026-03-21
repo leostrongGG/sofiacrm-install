@@ -407,9 +407,64 @@ crm_wa_gateway:     Up X minutes
 
 | Erro | Causa | Solução |
 |---|---|---|
+| `unauthorized` no docker pull | Access token Docker Hub expirado | Peça novo token ao suporte e rode opção 3 (Editar) |
 | `crm_api` não inicia após upgrade | `LICENSE_TOKEN` inválido ou ausente | Confira o token no `.env` e no override |
 | `crm_wa_gateway` não conecta | IP da VPS incorreto | Confira `VPS_PUBLIC_IP` no `.env` |
 | Portas 30000-30100 recusadas | Firewall bloqueando | Abra UDP/TCP 30000-30100 no firewall da VPS |
+
+---
+
+## Rollback Free → PRO (voltar para Free)
+
+Se necessário desfazer o upgrade. **Requer o arquivo de backup gerado antes do upgrade.**
+
+```sh
+# 1. Parar serviços
+cd /root/SofiaCRM
+docker compose down
+
+# 2. Mover override PRO (não deleta, só desativa)
+mv docker-compose.override.yml docker-compose.override.yml.bak
+
+# 3. Restaurar banco a partir do backup
+docker volume rm sofiacrm_postgres18_data
+docker compose up sofiacrm-pgvector -d
+sleep 10
+docker exec -i sofiacrm-pgvector pg_restore -U postgres -d crm \
+  --no-owner --no-acl < backup_free_YYYYMMDD_HHMMSS.dump
+
+# 4. Subir o Free
+docker compose up -d
+```
+
+> O arquivo de backup é gerado automaticamente pelo script na opção 2 (Upgrade PRO)
+> com o nome `backup_free_YYYYMMDD_HHMMSS.dump` na pasta `/root/SofiaCRM/`.
+
+---
+
+## Migrações de schema Free → PRO
+
+**Não é necessário nenhum script SQL manual.** O PRO executa `initDb` automaticamente
+a cada inicialização e aplica todas as migrações:
+
+| O que é migrado | Tipo |
+|---|---|
+| Tabela `user_tenants` (multi-tenancy) | Nova tabela |
+| Tabela `message_audio_listened` | Nova tabela |
+| Tabela `internal_chat_message_audio_listened` | Nova tabela |
+| Coluna `teams.is_system` | Nova coluna |
+| Coluna `teams.slug` | Nova coluna |
+| Coluna `users.global_role` | Nova coluna |
+| Índice `tenants_single_row` (limitava a 1 tenant) | Removido |
+| Equipe "Geral" | Criada automaticamente se não existir |
+
+Os logs confirmam quando a migração ocorre:
+```
+[initDb] Migrando dados para user_tenants (multi-tenancy)...
+[initDb] Migração user_tenants concluída.
+✅ Token de licença válido e ativo
+API inicializada com sucesso
+```
 
 ---
 

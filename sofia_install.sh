@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================
-#  SofiaCRM — Instalador Automático v1.2
+#  SofiaCRM — Instalador Automático v1.3
 #  Repositório: https://github.com/leostrongGG/sofiacrm-install
 # ==============================================================
 set -euo pipefail
@@ -51,7 +51,7 @@ print_banner() {
   echo -e "${CYAN}${BOLD}"
   echo "  ╔═══════════════════════════════════════════════════════╗"
   echo "  ║           Sofia CRM — Instalador Automático           ║"
-  echo "  ║                      v1.2                             ║"
+  echo "  ║                      v1.3                             ║"
   echo "  ╚═══════════════════════════════════════════════════════╝"
   echo -e "${NC}"
   echo ""
@@ -807,20 +807,19 @@ action_upgrade_pro() {
     echo -e "${YELLOW}→ Reiniciando crm_api (initDb migra user_tenants com dados existentes)...${NC}"
     docker compose up -d crm_api
     wait_crm_healthy
+
+    echo -e "${YELLOW}→ Verificando licença PRO nos logs...${NC}"
+    if docker logs crm_api 2>&1 | grep -qi "licen.*v.*lid\|Token de licen\|válido e ativo"; then
+      echo -e "${GREEN}✓ Licença PRO validada com sucesso${NC}"
+    else
+      echo -e "${YELLOW}⚠ Não foi possível confirmar a licença nos logs.${NC}"
+      echo -e "   Verifique com: docker logs crm_api | grep -i licen${NC}"
+    fi
   fi
 
   # ── Fase 5: Subir todos os serviços PRO ──────────────────────────────────
   echo -e "${YELLOW}→ Subindo todos os serviços PRO...${NC}"
   docker compose up -d
-
-  echo -e "${YELLOW}→ Verificando licença PRO nos logs...${NC}"
-  sleep 5
-  if docker logs crm_api 2>&1 | grep -qi "licen.*v.*lid\|Token de licen"; then
-    echo -e "${GREEN}✓ Licença PRO validada com sucesso${NC}"
-  else
-    echo -e "${YELLOW}⚠ Não foi possível confirmar a licença nos logs ainda.${NC}"
-    echo -e "   Verifique com: docker logs crm_api | grep -i licen${NC}"
-  fi
 
   if [ "$BACKUP_OK" = true ]; then
     echo ""

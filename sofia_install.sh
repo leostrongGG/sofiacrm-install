@@ -708,6 +708,13 @@ action_upgrade_pro() {
     exit 1
   fi
 
+  echo -e "${YELLOW}→ Removendo restrição de tenant único (Free → PRO)...${NC}"
+  if docker exec sofiacrm-pgvector psql -U postgres -d crm -c "DROP INDEX IF EXISTS tenants_single_row;" 2>/dev/null; then
+    echo -e "${GREEN}✓ Restrição tenants_single_row removida${NC}"
+  else
+    echo -e "${YELLOW}⚠ Não foi possível remover tenants_single_row (PostgreSQL indisponível — será removido pelo initDb)${NC}"
+  fi
+
   echo -e "${YELLOW}→ Reiniciando serviços...${NC}"
   docker compose down
   docker compose up -d

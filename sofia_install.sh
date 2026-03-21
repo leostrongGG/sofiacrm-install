@@ -61,7 +61,7 @@ print_banner() {
 main_menu() {
   echo -e "${BLUE}${BOLD}  O que deseja fazer?${NC}"
   echo ""
-  echo "    1) Instalar SofiaCRM Free  — nova instalação (edição Free)"
+  echo "    1) Instalar SofiaCRM       — nova instalação (Free ou PRO)"
   echo "    2) Upgrade para SofiaCRM Pro — fazer upgrade da edição Free para PRO"
   echo "    3) Editar Instalação        — alterar configurações e reiniciar"
   echo "    4) Atualizar SofiaCRM       — atualizar imagens para a versão mais recente"
@@ -533,13 +533,41 @@ print_summary() {
 action_instalar() {
   check_arch
   install_docker
-  CRM_EDITION="free"
-  LICENSE_TOKEN=""
-  VPS_PUBLIC_IP=""
+
+  echo -e "${BLUE}${BOLD}─── Escolha a edição ──────────────────────────────────────────${NC}"
+  echo ""
+  echo "    F) Free  — edição gratuita (1 tenant, sem gateway de voz)"
+  echo "    P) PRO   — multi-tenant, gateway de voz (requer licença)"
+  echo ""
+  while true; do
+    read -rp "  Edição [F/P]: " EDITION_CHOICE
+    case "${EDITION_CHOICE,,}" in
+      f) CRM_EDITION="free"; break ;;
+      p) CRM_EDITION="pro"; break ;;
+      *) echo -e "${RED}  ✗ Digite F ou P${NC}" ;;
+    esac
+  done
+  echo ""
+
   collect_info
+
+  if [ "$CRM_EDITION" == "pro" ]; then
+    collect_pro_info
+    docker_login_pro
+  else
+    LICENSE_TOKEN=""
+    VPS_PUBLIC_IP=""
+  fi
+
   generate_secrets
   create_env
-  rm -f "$INSTALL_DIR/docker-compose.override.yml"
+
+  if [ "$CRM_EDITION" == "pro" ]; then
+    create_pro_override
+  else
+    rm -f "$INSTALL_DIR/docker-compose.override.yml"
+  fi
+
   setup_traefik
   start_services
   wait_crm_healthy
@@ -708,12 +736,80 @@ action_upgrade_pro() {
     exit 1
   fi
 
-  echo -e "${YELLOW}→ Removendo restrição de tenant único (Free → PRO)...${NC}"
-  if docker exec sofiacrm-pgvector psql -U postgres -d crm -c "DROP INDEX IF EXISTS tenants_single_row;" 2>/dev/null; then
-    echo -e "${GREEN}✓ Restrição tenants_single_row removida${NC}"
-  else
-    echo -e "${YELLOW}⚠ Não foi possível remover tenants_single_row (PostgreSQL indisponível — será removido pelo initDb)${NC}"
-  fi
+  echo -e "${YELLOW}→ Aplicando migrações de schema Free → PRO...${NC}"
+  docker exec -i sofiacrm-pgvector psql -U postgres -d crm <<'MIGRATION_SQL' 2>/dev/null && \
+    echo -e "${GREEN}✓ Migrações de schema aplicadas (multi-tenant habilitado)${NC}" || \
+    echo -e "${YELLOW}⚠ Algumas migrações já existiam ou PostgreSQL indisponível${NC}"
+-- Remover restrição de single-tenant do Free
+DROP INDEX IF EXISTS tenants_single_row;
+
+-- Remover constraint global de email (Free limita a 1 email global)
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
+DROP INDEX IF EXISTS idx_users_email;
+
+-- Criar constraint de email por tenant (multi-tenant)
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_tenant_key ON users (tenant_id, email) WHERE tenant_id IS NOT NULL;
+-- Manter unicidade global para superadmins sem tenant
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_global_key ON users (email) WHERE tenant_id IS NULL;
+
+-- Novas colunas PRO
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS is_system boolean DEFAULT false NOT NULL;
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS slug character varying(32);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role character varying(50) DEFAULT 'USER';
+
+-- Índices PRO em teams
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_one_system_per_tenant ON teams USING btree (tenant_id) WHERE (is_system = true);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_tenant_slug_unique ON teams USING btree (tenant_id, slug) WHERE (slug IS NOT NULL);
+
+-- Tabela user_tenants (multi-tenancy)
+CREATE TABLE IF NOT EXISTS user_tenants (
+    id serial PRIMARY KEY,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id integer NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    role character varying(50) DEFAULT 'AGENT' NOT NULL,
+    is_protected boolean DEFAULT false,
+    created_at timestamp with time zone DEFAULT now(),
+    UNIQUE (user_id, tenant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_tenants_user_id ON user_tenants USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_tenants_tenant_id ON user_tenants USING btree (tenant_id);
+
+-- Popular user_tenants com usuários existentes
+INSERT INTO user_tenants (user_id, tenant_id, role)
+SELECT id, tenant_id, role FROM users
+WHERE tenant_id IS NOT NULL
+ON CONFLICT (user_id, tenant_id) DO NOTHING;
+
+-- Tabela message_audio_listened
+CREATE TABLE IF NOT EXISTS message_audio_listened (
+    id serial PRIMARY KEY,
+    message_id integer NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id integer NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    listened_at timestamp with time zone DEFAULT now(),
+    UNIQUE (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_audio_listened_tenant_user ON message_audio_listened USING btree (tenant_id, user_id);
+
+-- Tabela internal_chat_message_audio_listened
+CREATE TABLE IF NOT EXISTS internal_chat_message_audio_listened (
+    id serial PRIMARY KEY,
+    internal_chat_message_id integer NOT NULL REFERENCES internal_chat_messages(id) ON DELETE CASCADE,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id integer NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    listened_at timestamp with time zone DEFAULT now(),
+    UNIQUE (internal_chat_message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ichat_audio_listened_tenant_user ON internal_chat_message_audio_listened USING btree (tenant_id, user_id);
+
+-- Atualizar FKs (ON DELETE SET NULL)
+ALTER TABLE chatbot_flows DROP CONSTRAINT IF EXISTS chatbot_flows_created_by_fkey;
+ALTER TABLE chatbot_flows ADD CONSTRAINT chatbot_flows_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE kanban_boards DROP CONSTRAINT IF EXISTS kanban_boards_created_by_fkey;
+ALTER TABLE kanban_boards ADD CONSTRAINT kanban_boards_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE kanban_cards DROP CONSTRAINT IF EXISTS kanban_cards_created_by_fkey;
+ALTER TABLE kanban_cards ADD CONSTRAINT kanban_cards_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+MIGRATION_SQL
 
   echo -e "${YELLOW}→ Reiniciando serviços...${NC}"
   docker compose down

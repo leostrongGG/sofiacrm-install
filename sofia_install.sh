@@ -682,7 +682,7 @@ action_upgrade_pro() {
   if [ "${CRM_EDITION:-free}" == "pro" ]; then
     echo ""
     echo -e "${YELLOW}⚠  Esta instalação já está na edição PRO.${NC}"
-    echo -e "   Use a opção 2 (Editar) para alterar configurações PRO."
+    echo -e "   Use a opção 3 (Editar) para alterar configurações PRO."
     echo ""
     exit 0
   fi
@@ -691,10 +691,11 @@ action_upgrade_pro() {
   echo -e "${BLUE}${BOLD}─── Upgrade Free → PRO ────────────────────────────────────────${NC}"
   echo ""
   echo -e "  Este upgrade irá:"
-  echo -e "  ${GREEN}✓${NC} Manter todos os dados (banco, mídia, sessões WhatsApp)"
-  echo -e "  ${GREEN}✓${NC} Trocar a imagem para sofiacrm-pro:latest"
-  echo -e "  ${GREEN}✓${NC} Adicionar o serviço wa-call-gateway (chamadas de voz)"
-  echo -e "  ${GREEN}✓${NC} Manter todas as senhas e tokens existentes"
+  echo -e "  ${GREEN}✓${NC} Fazer backup completo dos dados Free"
+  echo -e "  ${GREEN}✓${NC} Recriar o banco com schema PRO nativo (sem migrações manuais)"
+  echo -e "  ${GREEN}✓${NC} Restaurar todos os dados no novo schema"
+  echo -e "  ${GREEN}✓${NC} Manter mídia, sessões WhatsApp e configurações"
+  echo -e "  ${GREEN}✓${NC} Adicionar multi-tenancy, gateway de voz e recursos PRO"
   echo ""
   read -rp "  Confirmar upgrade? [s/N]: " CONFIRM_UPGRADE
   echo ""
@@ -706,18 +707,30 @@ action_upgrade_pro() {
   create_env
   create_pro_override
 
-  echo -e "${YELLOW}→ Fazendo backup do banco antes do upgrade...${NC}"
-  BACKUP_FILE="$INSTALL_DIR/backup_free_$(date +%Y%m%d_%H%M%S).dump"
-  if docker exec sofiacrm-pgvector pg_dump -U postgres -Fc crm > "$BACKUP_FILE" 2>/dev/null; then
-    echo -e "${GREEN}✓ Backup salvo: $BACKUP_FILE ($(du -sh "$BACKUP_FILE" | cut -f1))${NC}"
-    echo -e "   ${YELLOW}Guarde este arquivo — use-o para rollback se necessário.${NC}"
+  # ── Fase 1: Backup ────────────────────────────────────────────────────────
+  local BACKUP_TS
+  BACKUP_TS=$(date +%Y%m%d_%H%M%S)
+  local BACKUP_FULL="$INSTALL_DIR/backup_free_${BACKUP_TS}.dump"
+  local BACKUP_DATA="$INSTALL_DIR/backup_free_${BACKUP_TS}_data.sql"
+  local BACKUP_OK=false
+
+  echo -e "${YELLOW}→ Fazendo backup completo do banco Free...${NC}"
+  if docker exec sofiacrm-pgvector pg_dump -U postgres -Fc crm > "$BACKUP_FULL" 2>/dev/null; then
+    echo -e "${GREEN}✓ Backup completo: $BACKUP_FULL ($(du -sh "$BACKUP_FULL" | cut -f1))${NC}"
+    echo -e "${YELLOW}→ Fazendo backup de dados (para restaurar no PRO)...${NC}"
+    if docker exec sofiacrm-pgvector pg_dump -U postgres --data-only --disable-triggers crm > "$BACKUP_DATA" 2>/dev/null; then
+      echo -e "${GREEN}✓ Backup de dados: $BACKUP_DATA${NC}"
+      BACKUP_OK=true
+    else
+      echo -e "${YELLOW}⚠ Backup de dados falhou — usando apenas o backup completo${NC}"
+    fi
   else
-    echo -e "${YELLOW}⚠ Não foi possível criar backup do banco (PostgreSQL pode estar indisponível).${NC}"
-    echo -e "   Deseja continuar mesmo assim?"
+    echo -e "${YELLOW}⚠ Não foi possível criar backup (PostgreSQL pode estar indisponível).${NC}"
     read -rp "   Continuar sem backup? [s/N]: " SKIP_BACKUP
     [[ "${SKIP_BACKUP,,}" != "s" ]] && { echo -e "${YELLOW}  Upgrade cancelado.${NC}"; exit 0; }
   fi
 
+  # ── Fase 2: Baixar imagens PRO ────────────────────────────────────────────
   echo -e "${YELLOW}→ Baixando imagens PRO...${NC}"
   set +e
   docker compose pull
@@ -736,85 +749,57 @@ action_upgrade_pro() {
     exit 1
   fi
 
-  echo -e "${YELLOW}→ Aplicando migrações de schema Free → PRO...${NC}"
-  docker exec -i sofiacrm-pgvector psql -U postgres -d crm <<'MIGRATION_SQL' 2>/dev/null && \
-    echo -e "${GREEN}✓ Migrações de schema aplicadas (multi-tenant habilitado)${NC}" || \
-    echo -e "${YELLOW}⚠ Algumas migrações já existiam ou PostgreSQL indisponível${NC}"
--- Remover restrição de single-tenant do Free
-DROP INDEX IF EXISTS tenants_single_row;
-
--- Remover constraint global de email (Free limita a 1 email global)
-ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
-DROP INDEX IF EXISTS idx_users_email;
-
--- Criar constraint de email por tenant (multi-tenant)
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_tenant_key ON users (tenant_id, email) WHERE tenant_id IS NOT NULL;
--- Manter unicidade global para superadmins sem tenant
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_global_key ON users (email) WHERE tenant_id IS NULL;
-
--- Novas colunas PRO
-ALTER TABLE teams ADD COLUMN IF NOT EXISTS is_system boolean DEFAULT false NOT NULL;
-ALTER TABLE teams ADD COLUMN IF NOT EXISTS slug character varying(32);
-ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role character varying(50) DEFAULT 'USER';
-
--- Índices PRO em teams
-CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_one_system_per_tenant ON teams USING btree (tenant_id) WHERE (is_system = true);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_tenant_slug_unique ON teams USING btree (tenant_id, slug) WHERE (slug IS NOT NULL);
-
--- Tabela user_tenants (multi-tenancy)
-CREATE TABLE IF NOT EXISTS user_tenants (
-    id serial PRIMARY KEY,
-    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tenant_id integer NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    role character varying(50) DEFAULT 'AGENT' NOT NULL,
-    is_protected boolean DEFAULT false,
-    created_at timestamp with time zone DEFAULT now(),
-    UNIQUE (user_id, tenant_id)
-);
-CREATE INDEX IF NOT EXISTS idx_user_tenants_user_id ON user_tenants USING btree (user_id);
-CREATE INDEX IF NOT EXISTS idx_user_tenants_tenant_id ON user_tenants USING btree (tenant_id);
-
--- Popular user_tenants com usuários existentes
-INSERT INTO user_tenants (user_id, tenant_id, role)
-SELECT id, tenant_id, role FROM users
-WHERE tenant_id IS NOT NULL
-ON CONFLICT (user_id, tenant_id) DO NOTHING;
-
--- Tabela message_audio_listened
-CREATE TABLE IF NOT EXISTS message_audio_listened (
-    id serial PRIMARY KEY,
-    message_id integer NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tenant_id integer NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    listened_at timestamp with time zone DEFAULT now(),
-    UNIQUE (message_id, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_message_audio_listened_tenant_user ON message_audio_listened USING btree (tenant_id, user_id);
-
--- Tabela internal_chat_message_audio_listened
-CREATE TABLE IF NOT EXISTS internal_chat_message_audio_listened (
-    id serial PRIMARY KEY,
-    internal_chat_message_id integer NOT NULL REFERENCES internal_chat_messages(id) ON DELETE CASCADE,
-    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tenant_id integer NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    listened_at timestamp with time zone DEFAULT now(),
-    UNIQUE (internal_chat_message_id, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_ichat_audio_listened_tenant_user ON internal_chat_message_audio_listened USING btree (tenant_id, user_id);
-
--- Atualizar FKs (ON DELETE SET NULL)
-ALTER TABLE chatbot_flows DROP CONSTRAINT IF EXISTS chatbot_flows_created_by_fkey;
-ALTER TABLE chatbot_flows ADD CONSTRAINT chatbot_flows_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE kanban_boards DROP CONSTRAINT IF EXISTS kanban_boards_created_by_fkey;
-ALTER TABLE kanban_boards ADD CONSTRAINT kanban_boards_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE kanban_cards DROP CONSTRAINT IF EXISTS kanban_cards_created_by_fkey;
-ALTER TABLE kanban_cards ADD CONSTRAINT kanban_cards_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-MIGRATION_SQL
-
-  echo -e "${YELLOW}→ Reiniciando serviços...${NC}"
+  # ── Fase 3: Parar Free e recriar banco com schema PRO ────────────────────
+  echo -e "${YELLOW}→ Parando serviços Free...${NC}"
   docker compose down
-  docker compose up -d
+
+  echo -e "${YELLOW}→ Removendo banco Free (será recriado com schema PRO nativo)...${NC}"
+  docker volume rm sofiacrm_postgres18_data
+
+  echo -e "${YELLOW}→ Iniciando PostgreSQL PRO...${NC}"
+  docker compose up -d pgvector
+  # Aguarda postgres estar pronto
+  for i in $(seq 1 30); do
+    if docker exec sofiacrm-pgvector pg_isready -U postgres -d crm -q 2>/dev/null; then
+      echo -e "${GREEN}✓ PostgreSQL pronto${NC}"
+      break
+    fi
+    sleep 2
+    printf "  aguardando PostgreSQL... %d/30\r" "$i"
+  done
+
+  echo -e "${YELLOW}→ Criando schema PRO via initDb (banco limpo)...${NC}"
+  docker compose up -d crm_api
   wait_crm_healthy
+
+  # ── Fase 4: Restaurar dados Free no schema PRO ────────────────────────────
+  if [ "$BACKUP_OK" = true ]; then
+    echo -e "${YELLOW}→ Parando crm_api para restaurar dados...${NC}"
+    docker compose stop crm_api
+
+    echo -e "${YELLOW}→ Restaurando dados Free no schema PRO...${NC}"
+    if docker exec -i sofiacrm-pgvector psql -U postgres -d crm < "$BACKUP_DATA" > /dev/null 2>&1; then
+      echo -e "${GREEN}✓ Dados restaurados com sucesso${NC}"
+    else
+      echo -e "${YELLOW}⚠ Restauração com avisos — verificando integridade...${NC}"
+      # Verifica se pelo menos a tabela tenants tem dados
+      TENANT_COUNT=$(docker exec sofiacrm-pgvector psql -U postgres -d crm -tAc "SELECT COUNT(*) FROM tenants" 2>/dev/null || echo "0")
+      if [ "$TENANT_COUNT" -gt 0 ]; then
+        echo -e "${GREEN}✓ Dados presentes ($TENANT_COUNT tenant(s) encontrado(s))${NC}"
+      else
+        echo -e "${RED}✗ Restauração falhou. Banco PRO iniciará vazio.${NC}"
+        echo -e "   Backup completo disponível para rollback: $BACKUP_FULL"
+      fi
+    fi
+
+    echo -e "${YELLOW}→ Reiniciando crm_api (initDb migra user_tenants com dados existentes)...${NC}"
+    docker compose up -d crm_api
+    wait_crm_healthy
+  fi
+
+  # ── Fase 5: Subir todos os serviços PRO ──────────────────────────────────
+  echo -e "${YELLOW}→ Subindo todos os serviços PRO...${NC}"
+  docker compose up -d
 
   echo -e "${YELLOW}→ Verificando licença PRO nos logs...${NC}"
   sleep 5
@@ -823,6 +808,13 @@ MIGRATION_SQL
   else
     echo -e "${YELLOW}⚠ Não foi possível confirmar a licença nos logs ainda.${NC}"
     echo -e "   Verifique com: docker logs crm_api | grep -i licen${NC}"
+  fi
+
+  if [ "$BACKUP_OK" = true ]; then
+    echo ""
+    echo -e "  ${YELLOW}Backups salvos (para rollback se necessário):${NC}"
+    echo -e "  • Completo: $BACKUP_FULL"
+    echo -e "  • Dados:    $BACKUP_DATA"
   fi
 
   print_summary

@@ -714,20 +714,32 @@ action_upgrade_pro() {
   local BACKUP_DATA="$INSTALL_DIR/backup_free_${BACKUP_TS}_data.sql"
   local BACKUP_OK=false
 
-  echo -e "${YELLOW}→ Fazendo backup completo do banco Free...${NC}"
-  if docker exec sofiacrm-pgvector pg_dump -U postgres -Fc crm > "$BACKUP_FULL" 2>/dev/null; then
-    echo -e "${GREEN}✓ Backup completo: $BACKUP_FULL ($(du -sh "$BACKUP_FULL" | cut -f1))${NC}"
-    echo -e "${YELLOW}→ Fazendo backup de dados (para restaurar no PRO)...${NC}"
-    if docker exec sofiacrm-pgvector pg_dump -U postgres --data-only --disable-triggers crm > "$BACKUP_DATA" 2>/dev/null; then
-      echo -e "${GREEN}✓ Backup de dados: $BACKUP_DATA${NC}"
-      BACKUP_OK=true
+  echo ""
+  echo -e "  ${BOLD}Backup do banco de dados:${NC}"
+  echo -e "  O backup completo pode levar alguns minutos dependendo do tamanho do banco."
+  echo -e "  Recomendado para instalações com dados reais de produção."
+  echo ""
+  read -rp "  Deseja fazer backup antes do upgrade? [S/n]: " DO_BACKUP
+  echo ""
+
+  if [[ "${DO_BACKUP,,}" != "n" ]]; then
+    echo -e "${YELLOW}→ Fazendo backup completo do banco Free...${NC}"
+    if docker exec sofiacrm-pgvector pg_dump -U postgres -Fc crm > "$BACKUP_FULL" 2>/dev/null; then
+      echo -e "${GREEN}✓ Backup completo: $BACKUP_FULL ($(du -sh "$BACKUP_FULL" | cut -f1))${NC}"
+      echo -e "${YELLOW}→ Fazendo backup de dados (para restaurar no PRO)...${NC}"
+      if docker exec sofiacrm-pgvector pg_dump -U postgres --data-only --disable-triggers crm > "$BACKUP_DATA" 2>/dev/null; then
+        echo -e "${GREEN}✓ Backup de dados: $BACKUP_DATA${NC}"
+        BACKUP_OK=true
+      else
+        echo -e "${YELLOW}⚠ Backup de dados falhou${NC}"
+      fi
     else
-      echo -e "${YELLOW}⚠ Backup de dados falhou — usando apenas o backup completo${NC}"
+      echo -e "${YELLOW}⚠ Não foi possível criar backup (PostgreSQL pode estar indisponível).${NC}"
+      read -rp "   Continuar sem backup? [s/N]: " SKIP_BACKUP
+      [[ "${SKIP_BACKUP,,}" != "s" ]] && { echo -e "${YELLOW}  Upgrade cancelado.${NC}"; exit 0; }
     fi
   else
-    echo -e "${YELLOW}⚠ Não foi possível criar backup (PostgreSQL pode estar indisponível).${NC}"
-    read -rp "   Continuar sem backup? [s/N]: " SKIP_BACKUP
-    [[ "${SKIP_BACKUP,,}" != "s" ]] && { echo -e "${YELLOW}  Upgrade cancelado.${NC}"; exit 0; }
+    echo -e "${YELLOW}⚠ Backup ignorado. O banco Free será deletado sem possibilidade de rollback.${NC}"
   fi
 
   # ── Fase 2: Baixar imagens PRO ────────────────────────────────────────────

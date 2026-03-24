@@ -434,18 +434,27 @@ http:
       priority: 20
 EOF
 
-  # Router n8n (adicionado apenas se N8N_DOMAIN estiver configurado)
+  # Routers n8n (adicionados apenas se N8N_DOMAIN estiver configurado)
   if [[ -n "$N8N_DOMAIN" ]]; then
     cat >> "$INSTALL_DIR/traefik/dynamic.yml" <<EOF
 
-    n8n:
+    n8n_editor:
       rule: "Host(\`${N8N_DOMAIN}\`)"
       entryPoints:
         - websecure
-      service: n8n
+      service: n8n_editor
       tls:
         certResolver: letsencryptresolver
       priority: 1
+
+    n8n_webhook:
+      rule: "Host(\`${N8N_DOMAIN}\`) && PathPrefix(\`/webhook\`)"
+      entryPoints:
+        - websecure
+      service: n8n_webhook
+      tls:
+        certResolver: letsencryptresolver
+      priority: 10
 EOF
   fi
 
@@ -464,14 +473,19 @@ EOF
           - url: "http://crm_meta_cloud:8090"
 EOF
 
-  # Service n8n
+  # Services n8n
   if [[ -n "$N8N_DOMAIN" ]]; then
     cat >> "$INSTALL_DIR/traefik/dynamic.yml" <<EOF
 
-    n8n:
+    n8n_editor:
       loadBalancer:
         servers:
-          - url: "http://n8n:5678"
+          - url: "http://n8n_editor:5678"
+
+    n8n_webhook:
+      loadBalancer:
+        servers:
+          - url: "http://n8n_webhook:5678"
 EOF
   fi
 
@@ -646,7 +660,7 @@ action_atualizar() {
   wait_crm_healthy
 
   # Atualiza n8n se estiver instalado
-  if [[ -n "${N8N_DOMAIN:-}" ]] && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^n8n$'; then
+  if [[ -n "${N8N_DOMAIN:-}" ]] && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qE '^n8n_editor$'; then
     echo -e "${YELLOW}→ Atualizando n8n...${NC}"
     docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" pull
     docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" up -d
@@ -877,12 +891,21 @@ action_instalar_n8n() {
     exit 1
   fi
 
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^n8n$'; then
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qE '^n8n$|^n8n_editor$'; then
     echo ""
-    echo -e "${YELLOW}⚠  Container n8n já existe.${NC}"
+    echo -e "${YELLOW}⚠  n8n já instalado.${NC}"
+    echo -e "   ${YELLOW}Nota: Se veio de uma versão anterior (single-container), os dados do${NC}"
+    echo -e "   ${YELLOW}SQLite não serão migrados. Exporte os workflows antes de continuar.${NC}"
     read -rp "  Deseja reconfigurar e reiniciar o n8n? [s/N]: " CONFIRM_N8N
     echo ""
     [[ "${CONFIRM_N8N,,}" != "s" ]] && { echo -e "${YELLOW}  Cancelado.${NC}"; exit 0; }
+    # Para e remove container legado (instalação single-container anterior)
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^n8n$'; then
+      echo -e "${YELLOW}→ Removendo container n8n legado...${NC}"
+      docker stop n8n 2>/dev/null || true
+      docker rm   n8n 2>/dev/null || true
+    fi
+    docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" down 2>/dev/null || true
   fi
 
   echo ""
@@ -908,6 +931,13 @@ EOF
   setup_traefik
   docker compose restart traefik
 
+  # Cria banco n8n_queue no PostgreSQL se não existir
+  echo -e "${YELLOW}→ Criando banco n8n_queue no PostgreSQL (se não existir)...${NC}"
+  docker exec sofiacrm-pgvector psql -U postgres -tc \
+    "SELECT 1 FROM pg_database WHERE datname='n8n_queue'" \
+    | grep -q 1 || docker exec sofiacrm-pgvector psql -U postgres -c "CREATE DATABASE n8n_queue;"
+  echo -e "${GREEN}✓ Banco n8n_queue pronto${NC}"
+
   echo -e "${YELLOW}→ Subindo n8n...${NC}"
   docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" pull
   docker compose -f "$INSTALL_DIR/docker-compose-n8n.yml" --env-file "$INSTALL_DIR/.env" up -d
@@ -916,7 +946,7 @@ EOF
   echo -e "${YELLOW}→ Aguardando n8n inicializar...${NC}"
   local n8n_ready=false
   for i in $(seq 1 20); do
-    if docker exec n8n wget -q --tries=1 --spider http://localhost:5678/ 2>/dev/null; then
+    if docker exec n8n_editor wget -q --tries=1 --spider http://localhost:5678/ 2>/dev/null; then
       echo -e "${GREEN}✓ n8n pronto!${NC}"
       n8n_ready=true
       break
@@ -925,7 +955,7 @@ EOF
     printf "  tentativa %d/20...\r" "$i"
   done
   if [ "$n8n_ready" = false ]; then
-    echo -e "${YELLOW}⚠ n8n ainda inicializando. Verifique com: docker logs n8n --tail 20${NC}"
+    echo -e "${YELLOW}⚠ n8n ainda inicializando. Verifique com: docker logs n8n_editor --tail 20${NC}"
   fi
 
   echo ""
@@ -935,6 +965,9 @@ EOF
   echo ""
   echo -e "  ${BOLD}➜ Acesse o n8n em:${NC}"
   echo -e "     ${CYAN}https://${N8N_DOMAIN}${NC}"
+  echo ""
+  echo -e "  ${BOLD}➜ Chamadas internas de webhook (CRM → n8n):${NC}"
+  echo -e "     ${CYAN}http://n8n_webhook:5678/webhook/SEU_PATH${NC}"
   echo ""
   echo -e "  ${BOLD}Containers em execução:${NC}"
   docker ps --format "    {{.Names}}: {{.Status}}"

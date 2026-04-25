@@ -1,7 +1,7 @@
 # SofiaCRM — Instalador Docker
 
 Instalador automático do [Sofia CRM](https://sofiacrm.com.br) para VPS Linux com Docker.  
-Versão do script: **v1.3**
+Versão do script: **v1.4**
 
 ---
 
@@ -40,6 +40,7 @@ Para uma **nova instalação**, escolha a opção `1`. O script vai perguntar:
 2. **Domínio** do CRM (ex: `crm.seudominio.com`)
 3. **E-mail** para o certificado SSL (Let's Encrypt)
 4. **Storage de mídia**: local (disco da VPS) ou S3 (Backblaze B2, AWS, R2...)
+5. **Modo de filas**: integrado (padrão) ou separado (worker dedicado)
 
 Tudo o mais — senhas, tokens, banco de dados — é gerado e configurado automaticamente.
 
@@ -75,7 +76,9 @@ Mídia e sessões WhatsApp são preservados (volumes separados, não são tocado
 
 ### Opção 3 — Editar instalação
 
-Altera qualquer configuração (domínio, e-mail, storage, tokens PRO) e reinicia os containers com as novas definições. Para instalações PRO, permite também atualizar `LICENSE_TOKEN` e `VPS_PUBLIC_IP`.
+Altera qualquer configuração (domínio, e-mail, storage, modo de filas, tokens PRO) e reinicia os containers com as novas definições. Para instalações PRO, permite também atualizar `LICENSE_TOKEN` e `VPS_PUBLIC_IP`.
+
+> **Instalação existente:** para ativar o worker dedicado em uma VPS já instalada, execute o script e escolha a opção `3`, depois selecione o modo **Separado**. Não é necessário reinstalar.
 
 ### Opção 4 — Atualizar
 
@@ -131,10 +134,36 @@ Instala o [n8n](https://n8n.io) (automação de workflows) no mesmo servidor, in
 | `DOCKERHUB_PASSWORD` | PRO | Access token Docker Hub (fornecido na compra — pode expirar, peça novo ao suporte) |
 | `N8N_DOMAIN` | n8n | Subdomínio do n8n (ex: `n8n.seudominio.com`) |
 | `N8N_ENCRYPTION_KEY` | n8n | Chave de criptografia do n8n (gerada automaticamente — nunca alterar após instalar) |
+| `WORKER_MODE` | Todas | `full` = API + filas no mesmo container (padrão) · `split` = worker dedicado |
+| `INSTANCE_ROLE` | Todas | Definido automaticamente pelo `WORKER_MODE`: `full` ou `api` |
+| `REQUIRE_REDIS_ADAPTER` | Todas | `true` automático quando `WORKER_MODE=split` — garante sincronização WebSocket |
 
 > **Sobre `META_CLOUD_SERVICE_TOKEN`:** Token gerado por você para proteger a comunicação interna entre containers. Não tem relação com credenciais da Meta/Facebook.
 
 > **Sobre usuários:** O PostgreSQL usa sempre `postgres`. O Redis não usa nome de usuário, apenas senha.
+
+---
+
+## Worker dedicado (modo separado)
+
+Por padrão o `crm_api` roda em modo `full` — atende requisições HTTP e processa filas (campanhas, agendamentos) no mesmo container. Para alto volume de mensagens, é possível ativar um **worker dedicado** que isola o processamento de filas:
+
+```
+VPS
+├── crm_api     (INSTANCE_ROLE=api)    → só atende HTTP/WebSocket
+├── crm_worker  (INSTANCE_ROLE=worker) → só processa filas/campanhas
+└── demais serviços...
+```
+
+**Benefícios:** campanhas em massa não competem por CPU/memória com os agentes no painel.
+
+**Como ativar em uma instalação existente:**
+```sh
+./sofia_install.sh
+# Escolha opção 3 (Editar) → Modo de filas → 2 (Separado)
+```
+
+**Como ativar em uma nova instalação:** durante a instalação (opção 1), responda `2` na pergunta sobre modo de filas.
 
 ---
 

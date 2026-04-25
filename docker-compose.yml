@@ -115,6 +115,9 @@ services:
       META_CLOUD_SERVICE_URL: http://meta-cloud-service:8090
       META_CLOUD_SERVICE_TOKEN: ${META_CLOUD_SERVICE_TOKEN}
       PUBLIC_BASE_URL: https://${CRM_DOMAIN}
+      CALL_GATEWAY_URL: http://wa-call-gateway:8091
+      INSTANCE_ROLE: ${INSTANCE_ROLE:-full}
+      REQUIRE_REDIS_ADAPTER: ${REQUIRE_REDIS_ADAPTER:-false}
     volumes:
       - media_data:/app/media
     networks:
@@ -158,6 +161,44 @@ services:
       CRM_API_URL: http://crm_api:3000
       META_CLOUD_SERVICE_TOKEN: ${META_CLOUD_SERVICE_TOKEN}
       PORT: 8090
+    networks:
+      - sofiacrm_net
+
+  # ── CRM Worker — processamento dedicado de filas (opcional) ──────────────────
+  # Ativado com: docker compose --profile worker up -d
+  # Ou automaticamente pelo script quando WORKER_MODE=split
+  crm_worker:
+    image: inovanode/sofiacrm-community:latest
+    container_name: crm_worker
+    restart: always
+    profiles: [worker]
+    command: ["node", "dist/worker-entry.js"]
+    depends_on:
+      crm_api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgvector:5432/crm
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NODE_ENV: production
+      INSTANCE_ROLE: worker
+      MEDIA_DIR: /app/media
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
+      AWS_S3_ENDPOINT: ${AWS_S3_ENDPOINT:-}
+      AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-false}
+      JWT_SECRET: ${JWT_SECRET}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_TOKEN}
+      META_CLOUD_SERVICE_TOKEN: ${META_CLOUD_SERVICE_TOKEN}
+      PUBLIC_BASE_URL: https://${CRM_DOMAIN}
+      CALL_GATEWAY_URL: http://wa-call-gateway:8091
+      LOG_LEVEL: INFO
+      APP_LOCALE: pt-BR
+    volumes:
+      - media_data:/app/media
     networks:
       - sofiacrm_net
 

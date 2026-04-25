@@ -45,6 +45,8 @@ DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-}"
 PRO_IMAGE_TAG="${PRO_IMAGE_TAG:-latest}"
 N8N_DOMAIN="${N8N_DOMAIN:-}"
 N8N_ENCRYPTION_KEY="${N8N_ENCRYPTION_KEY:-}"
+WORKER_MODE="${WORKER_MODE:-full}"
+INSTANCE_ROLE="${INSTANCE_ROLE:-full}"
 
 # ── Banner ─────────────────────────────────────────────────────────────────────
 print_banner() {
@@ -84,6 +86,13 @@ check_arch() {
     exit 1
   fi
   echo -e "${GREEN}✓ Arquitetura AMD64${NC}"
+}
+
+# ── Wrapper docker compose com perfis ───────────────────────────────────────────────
+dc() {
+  local -a profiles=()
+  [[ "${WORKER_MODE:-full}" == "split" ]] && profiles=(--profile worker)
+  docker compose "${profiles[@]}" "$@"
 }
 
 # ── Docker ─────────────────────────────────────────────────────────────────────
@@ -174,6 +183,25 @@ collect_info() {
     AWS_S3_ENDPOINT=""
     AWS_S3_FORCE_PATH_STYLE="false"
   fi
+
+  echo ""
+  echo -e "  ${BOLD}Modo de processamento de filas:${NC}"
+  echo "    1) Integrado  — API e filas no mesmo container (padrão, mais simples)"
+  echo "    2) Separado   — container dedicado para filas/campanhas (recomendado para alto volume)"
+  echo ""
+
+  local worker_default="1"
+  [[ "${WORKER_MODE}" == "split" ]] && worker_default="2"
+
+  while true; do
+    read -rp "  Modo [1/2] (atual: ${worker_default}): " WORKER_CHOICE
+    WORKER_CHOICE="${WORKER_CHOICE:-${worker_default}}"
+    case "$WORKER_CHOICE" in
+      1) WORKER_MODE="full";  INSTANCE_ROLE="full";  break ;;
+      2) WORKER_MODE="split"; INSTANCE_ROLE="api";   break ;;
+      *) echo -e "${RED}  ✗ Digite 1 ou 2${NC}" ;;
+    esac
+  done
 
   echo ""
 }
@@ -308,6 +336,16 @@ REDIS_PASSWORD=${REDIS_PASSWORD}
 JWT_SECRET=${JWT_SECRET}
 INTERNAL_TOKEN=${INTERNAL_TOKEN}
 META_CLOUD_SERVICE_TOKEN=${META_CLOUD_SERVICE_TOKEN}
+
+# =============================================================
+# WORKER
+# WORKER_MODE: full  = API + filas no mesmo container (padrão)
+#              split = crm_worker dedicado para filas (--profile worker)
+# INSTANCE_ROLE: definido automaticamente pelo WORKER_MODE acima
+# =============================================================
+WORKER_MODE=${WORKER_MODE}
+INSTANCE_ROLE=${INSTANCE_ROLE}
+REQUIRE_REDIS_ADAPTER=$([ "${WORKER_MODE}" == "split" ] && echo "true" || echo "false")
 
 # =============================================================
 # STORAGE DE MÍDIA
@@ -522,7 +560,7 @@ start_services() {
   echo -e "${YELLOW}→ Subindo todos os containers (Traefik → PostgreSQL → Redis → CRM)...${NC}"
   echo -e "   (o banco 'crm' é criado automaticamente pelo PostgreSQL)"
   echo ""
-  docker compose up -d
+  dc up -d
   echo -e "${GREEN}✓ Todos os serviços iniciados${NC}"
 }
 
@@ -651,8 +689,8 @@ action_editar() {
   setup_traefik
 
   echo -e "${YELLOW}→ Reiniciando serviços com as novas configurações...${NC}"
-  docker compose down
-  docker compose up -d
+  dc down
+  dc up -d
   wait_crm_healthy
   print_summary
 }
@@ -676,10 +714,10 @@ action_atualizar() {
   if [ "${CRM_EDITION:-free}" == "pro" ]; then
     docker_login_pro
   fi
-  docker compose pull
+  dc pull
   echo -e "${YELLOW}→ Reiniciando containers...${NC}"
-  docker compose down
-  docker compose up -d
+  dc down
+  dc up -d
   wait_crm_healthy
 
   # Atualiza n8n se estiver instalado
@@ -782,7 +820,7 @@ action_upgrade_pro() {
   # ── Fase 2: Baixar imagens PRO ────────────────────────────────────────────
   echo -e "${YELLOW}→ Baixando imagens PRO...${NC}"
   set +e
-  docker compose pull
+  dc pull
   PULL_STATUS=$?
   set -e
 
@@ -800,13 +838,13 @@ action_upgrade_pro() {
 
   # ── Fase 3: Parar Free e recriar banco com schema PRO ────────────────────
   echo -e "${YELLOW}→ Parando serviços Free...${NC}"
-  docker compose down
+  dc down
 
   echo -e "${YELLOW}→ Removendo banco Free (será recriado com schema PRO nativo)...${NC}"
   docker volume rm sofiacrm_postgres18_data
 
   echo -e "${YELLOW}→ Iniciando PostgreSQL PRO...${NC}"
-  docker compose up -d pgvector
+  dc up -d pgvector
   # Aguarda postgres estar pronto
   for i in $(seq 1 30); do
     if docker exec sofiacrm-pgvector pg_isready -U postgres -d crm -q 2>/dev/null; then
@@ -818,13 +856,13 @@ action_upgrade_pro() {
   done
 
   echo -e "${YELLOW}→ Criando schema PRO via initDb (banco limpo)...${NC}"
-  docker compose up -d crm_api
+  dc up -d crm_api
   wait_crm_healthy
 
   # ── Fase 4: Restaurar dados Free no schema PRO ────────────────────────────
   if [ "$BACKUP_OK" = true ]; then
     echo -e "${YELLOW}→ Parando crm_api para restaurar dados...${NC}"
-    docker compose stop crm_api
+    dc stop crm_api
 
     echo -e "${YELLOW}→ Restaurando dados Free no schema PRO...${NC}"
     if docker exec -i sofiacrm-pgvector psql -U postgres -d crm < "$BACKUP_DATA" > /dev/null 2>&1; then
@@ -842,7 +880,7 @@ action_upgrade_pro() {
     fi
 
     echo -e "${YELLOW}→ Reiniciando crm_api (initDb migra user_tenants com dados existentes)...${NC}"
-    docker compose up -d crm_api
+    dc up -d crm_api
     wait_crm_healthy
 
     echo -e "${YELLOW}→ Verificando licença PRO nos logs...${NC}"
@@ -856,7 +894,7 @@ action_upgrade_pro() {
 
   # ── Fase 5: Subir todos os serviços PRO ──────────────────────────────────
   echo -e "${YELLOW}→ Subindo todos os serviços PRO...${NC}"
-  docker compose up -d
+  dc up -d
 
   if [ "$BACKUP_OK" = true ]; then
     echo ""

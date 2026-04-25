@@ -21,6 +21,10 @@ services:
     environment:
       LICENSE_TOKEN: ${LICENSE_TOKEN}
 
+  # Substitui a imagem Free pela PRO no worker dedicado (quando WORKER_MODE=split)
+  crm_worker:
+    image: inovanode/sofiacrm-pro:${PRO_IMAGE_TAG:-latest}
+
   # Serviço exclusivo da edição PRO — gateway de chamadas de voz via WhatsApp
   wa-call-gateway:
     image: inovanode/sofiacrm-gateway:latest

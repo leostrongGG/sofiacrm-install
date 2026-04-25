@@ -42,6 +42,7 @@ LICENSE_TOKEN="${LICENSE_TOKEN:-}"
 VPS_PUBLIC_IP="${VPS_PUBLIC_IP:-}"
 DOCKERHUB_USER="${DOCKERHUB_USER:-}"
 DOCKERHUB_PASSWORD="${DOCKERHUB_PASSWORD:-}"
+PRO_IMAGE_TAG="${PRO_IMAGE_TAG:-latest}"
 N8N_DOMAIN="${N8N_DOMAIN:-}"
 N8N_ENCRYPTION_KEY="${N8N_ENCRYPTION_KEY:-}"
 
@@ -230,6 +231,25 @@ collect_pro_info() {
   done
 
   echo ""
+  echo -e "  ${BOLD}Versão das imagens PRO:${NC}"
+  echo "    1) Estável  (latest)  — versão de produção recomendada"
+  echo "    2) Homolog  (homolog) — versão de testes/homologação com novidades"
+  echo ""
+
+  local tag_default="1"
+  [[ "${PRO_IMAGE_TAG:-latest}" == "homolog" ]] && tag_default="2"
+
+  while true; do
+    read -rp "  Versão [1/2] (atual: ${tag_default}): " TAG_CHOICE
+    TAG_CHOICE="${TAG_CHOICE:-${tag_default}}"
+    case "$TAG_CHOICE" in
+      1) PRO_IMAGE_TAG="latest";  break ;;
+      2) PRO_IMAGE_TAG="homolog"; break ;;
+      *) echo -e "${RED}  ✗ Digite 1 ou 2${NC}" ;;
+    esac
+  done
+
+  echo ""
 }
 
 # ── Geração de tokens ─────────────────────────────────────────────────────────
@@ -314,11 +334,13 @@ EOF
 # LICENSE_TOKEN: chave de ativação da licença Pro (fornecido na compra)
 # VPS_PUBLIC_IP: IP público da VPS (usado pelo wa-call-gateway)
 # DOCKERHUB_USER / DOCKERHUB_PASSWORD: credenciais para baixar imagens privadas
+# PRO_IMAGE_TAG: tag das imagens PRO (latest = estável, homolog = homologação)
 # =============================================================
 LICENSE_TOKEN=${LICENSE_TOKEN}
 VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
 DOCKERHUB_USER=${DOCKERHUB_USER}
 DOCKERHUB_PASSWORD=${DOCKERHUB_PASSWORD}
+PRO_IMAGE_TAG=${PRO_IMAGE_TAG}
 EOF
   fi
 
@@ -571,6 +593,7 @@ action_instalar() {
   else
     LICENSE_TOKEN=""
     VPS_PUBLIC_IP=""
+    PRO_IMAGE_TAG="latest"
   fi
 
   generate_secrets

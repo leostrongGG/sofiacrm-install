@@ -130,7 +130,7 @@ services:
 
   # ── WhatsApp Service ──────────────────────────────────────────────────────────
   whats-service:
-    image: inovanode/sofiacrm-whats-service-pro:latest
+    image: inovanode/sofiacrm-whats-service-pro:${PRO_IMAGE_TAG:-latest}
     container_name: crm_whatsmeow
     restart: always
     depends_on:
@@ -148,7 +148,7 @@ services:
 
   # ── Meta Cloud Service ────────────────────────────────────────────────────────
   meta-cloud-service:
-    image: inovanode/sofia-meta-cloud-service-pro:latest
+    image: inovanode/sofia-meta-cloud-service-pro:${PRO_IMAGE_TAG:-latest}
     container_name: crm_meta_cloud
     restart: always
     depends_on:

@@ -17,7 +17,7 @@ services:
 
   # Substitui a imagem Free pela PRO e injeta a licença
   crm_api:
-    image: inovanode/sofiacrm-pro:latest
+    image: inovanode/sofiacrm-pro:${PRO_IMAGE_TAG:-latest}
     environment:
       LICENSE_TOKEN: ${LICENSE_TOKEN}
 

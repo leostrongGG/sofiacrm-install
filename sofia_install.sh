@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================
-#  SofiaCRM — Instalador Automático v1.3
+#  SofiaCRM — Instalador Automático v1.4
 #  Repositório: https://github.com/leostrongGG/sofiacrm-install
 # ==============================================================
 set -euo pipefail
@@ -54,7 +54,7 @@ print_banner() {
   echo -e "${CYAN}${BOLD}"
   echo "  ╔═══════════════════════════════════════════════════════╗"
   echo "  ║           Sofia CRM — Instalador Automático           ║"
-  echo "  ║                      v1.3                             ║"
+  echo "  ║                      v1.4                             ║"
   echo "  ╚═══════════════════════════════════════════════════════╝"
   echo -e "${NC}"
   echo ""

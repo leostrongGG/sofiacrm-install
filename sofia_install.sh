@@ -348,6 +348,13 @@ INSTANCE_ROLE=${INSTANCE_ROLE}
 REQUIRE_REDIS_ADAPTER=$([ "${WORKER_MODE}" == "split" ] && echo "true" || echo "false")
 
 # =============================================================
+# FEATURES
+# DISABLE_TRIAL_REGISTRATION: 1 = bloqueia cadastro trial (padrão)
+#                              0 = permite cadastro trial
+# =============================================================
+DISABLE_TRIAL_REGISTRATION=${DISABLE_TRIAL_REGISTRATION:-1}
+
+# =============================================================
 # STORAGE DE MÍDIA
 # =============================================================
 STORAGE_TYPE=${STORAGE_TYPE}
